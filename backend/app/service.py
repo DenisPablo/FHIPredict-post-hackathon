@@ -12,6 +12,7 @@ import duckdb
 import joblib
 import numpy as np
 from .config import Settings
+from .monitor.snapshots import SnapshotStore
 from .openmeteo import WeatherGridForecast, fetch_openmeteo_grid
 from .predictor import FireRiskPredictor
 from .spread import (
@@ -128,6 +129,14 @@ class ForecastService:
         self._neighbor_graph: NeighborGraph | None = None
         self._cache_path: Path = settings.models_dir / ".forecast_cache.joblib"
         self._cache: CachedForecast | None = self._load_disk_cache()
+        self._snapshot_store: SnapshotStore | None = (
+            SnapshotStore(
+                db_path=settings.monitor_dir / "monitor.duckdb",
+                memory_limit=settings.monitor_duckdb_memory_limit,
+            )
+            if settings.enable_monitor_snapshots
+            else None
+        )
         self._lock = asyncio.Lock()
         self._refresh_task: asyncio.Task[None] | None = None
 
@@ -197,6 +206,8 @@ class ForecastService:
     async def warm_up(self) -> None:
         """Pre-warm forecast cache in the background on server startup."""
         if self._cache is not None and time.monotonic() < self._cache.expires_at:
+            if self._snapshot_store is not None:
+                await asyncio.to_thread(self._maybe_save_snapshot_24h, self._cache)
             return
         try:
             await self._refresh_forecast(force_refresh=True)
@@ -263,7 +274,30 @@ class ForecastService:
             )
             self._cache = new_cache
             asyncio.create_task(asyncio.to_thread(self._save_disk_cache, new_cache))
+            if self._snapshot_store is not None:
+                asyncio.create_task(asyncio.to_thread(self._maybe_save_snapshot_24h, new_cache))
             return new_cache
+
+    def _maybe_save_snapshot_24h(self, cached: CachedForecast) -> bool:
+        """Persist today's 24h prediction snapshot without disrupting forecast serving."""
+        if self._snapshot_store is None or len(cached.dates) == 0:
+            return False
+        try:
+            issued_date = cached.generated_at[:10]
+            probs_24h = cached.probs[:, 0]
+            categories = self.predictor.categorize(probs_24h)
+            return self._snapshot_store.save_snapshot_24h(
+                issued_date=issued_date,
+                target_date=cached.dates[0],
+                generated_at=cached.generated_at,
+                model_version=self.predictor.model_version,
+                cell_ids=self.baseline.cell_id,
+                probs_24h=probs_24h,
+                risk_categories=categories,
+            )
+        except Exception as exc:
+            logger.warning("Failed to persist 24h monitor snapshot: %s", exc)
+            return False
 
     def _score_all_days(self, weather: WeatherGridForecast) -> tuple[np.ndarray, np.ndarray]:
         b = self.baseline
