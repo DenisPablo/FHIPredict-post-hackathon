@@ -12,25 +12,30 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from .config import get_settings
+from .monitor.service import MonitorService
 from .service import ForecastService
 
 
 _service: ForecastService | None = None
+_monitor: MonitorService | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _service
-    _service = ForecastService(get_settings())
+    global _service, _monitor
+    settings = get_settings()
+    _service = ForecastService(settings)
+    _monitor = MonitorService(settings, _service.baseline)
     warmup_task = asyncio.create_task(_service.warm_up())
     refresh_task = asyncio.create_task(_service.run_periodic_refresh())
+    monitor_task = asyncio.create_task(_monitor.run_periodic_monitor())
     try:
         yield
     finally:
-        for task in (warmup_task, refresh_task):
+        for task in (warmup_task, refresh_task, monitor_task):
             if not task.done():
                 task.cancel()
-        await asyncio.gather(warmup_task, refresh_task, return_exceptions=True)
+        await asyncio.gather(warmup_task, refresh_task, monitor_task, return_exceptions=True)
 
 
 def create_app() -> FastAPI:
@@ -40,7 +45,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
 
@@ -133,6 +138,52 @@ def create_app() -> FastAPI:
             min_risk=min_risk,
             bbox=parsed_bbox,
         )
+
+    @app.get("/api/v1/monitor/status")
+    async def monitor_status():
+        assert _monitor is not None
+        return _monitor.get_status()
+
+    @app.get("/api/v1/monitor/metrics")
+    async def monitor_metrics(limit: int = Query(default=30, ge=1, le=365)):
+        assert _monitor is not None
+        items = await asyncio.to_thread(_monitor.list_metrics, limit=limit)
+        return {"items": items}
+
+    @app.get("/api/v1/monitor/comparison")
+    async def monitor_comparison(
+        target_date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        issued_date: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        min_frp_mw: float = Query(default=10.0, ge=0.0),
+        min_alert_risk: Literal["Moderado", "Alto", "Extremo"] = "Moderado",
+    ):
+        assert _monitor is not None
+        try:
+            return await asyncio.to_thread(
+                _monitor.get_comparison_geojson,
+                target_date=target_date,
+                issued_date=issued_date,
+                min_frp_mw=min_frp_mw,
+                min_alert_risk=min_alert_risk,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/v1/monitor/run", status_code=202)
+    async def monitor_run(
+        date: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        day_range: int = Query(default=1, ge=1, le=10),
+        min_frp_mw: float = Query(default=10.0, ge=0.0),
+    ):
+        assert _monitor is not None
+        try:
+            return _monitor.trigger_run(
+                date=date,
+                day_range=day_range,
+                min_frp_mw=min_frp_mw,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if settings.static_dir and settings.static_dir.is_dir():
         static_root = settings.static_dir.resolve()
