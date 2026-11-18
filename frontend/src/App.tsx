@@ -1,6 +1,6 @@
-import { Suspense, lazy, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ExternalLink, Globe, Loader2 } from 'lucide-react';
+import { Activity, ExternalLink, Globe, Loader2 } from 'lucide-react';
 import { fetchForecast, fetchSpread, type RiskCategory, type SpreadHorizonHours } from './api/forecast';
 import type { FlyTarget } from './components/RiskMap';
 import { RiskLegend } from './components/RiskLegend';
@@ -10,6 +10,9 @@ import { COPY, type Lang } from './i18n';
 
 const RiskMap = lazy(() =>
   import('./components/RiskMap').then((mod) => ({ default: mod.RiskMap })),
+);
+const MonitorDashboard = lazy(() =>
+  import('./components/MonitorDashboard').then((mod) => ({ default: mod.MonitorDashboard })),
 );
 
 export function App() {
@@ -23,6 +26,22 @@ export function App() {
   const [spreadHorizon, setSpreadHorizon] = useState<SpreadHorizonHours>(24);
   const [flyTarget, setFlyTarget] = useState<FlyTarget | null>(null);
   const [activeNavId, setActiveNavId] = useState<string>('arg');
+  const [pathname, setPathname] = useState<string>(() => window.location.pathname);
+
+  useEffect(() => {
+    const onPop = () => setPathname(window.location.pathname);
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  function navigate(to: string) {
+    if (window.location.pathname !== to) {
+      window.history.pushState({}, '', to);
+      setPathname(to);
+    }
+  }
+
+  const isMonitorRoute = pathname.startsWith('/monitor');
 
   const t = COPY[lang];
   const locale = lang === 'es' ? 'es-AR' : 'en-US';
@@ -40,6 +59,7 @@ export function App() {
         },
         signal,
       ),
+    enabled: !isMonitorRoute,
     staleTime: 10 * 60 * 1000,
     placeholderData: (prev) => prev,
   });
@@ -57,10 +77,22 @@ export function App() {
         },
         signal,
       ),
-    enabled: showSpread,
+    enabled: !isMonitorRoute && showSpread,
     staleTime: 10 * 60 * 1000,
     placeholderData: (prev) => prev,
   });
+
+  if (isMonitorRoute) {
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-space-base" />}>
+        <MonitorDashboard
+          lang={lang}
+          onToggleLang={() => setLang((prev) => (prev === 'es' ? 'en' : 'es'))}
+          onBackToMap={() => navigate('/')}
+        />
+      </Suspense>
+    );
+  }
 
   const meta = query.data?.meta;
 
@@ -120,6 +152,18 @@ export function App() {
           )}
 
           <div className="mx-1 h-4 w-px bg-space-border" />
+
+          <a
+            href="/monitor"
+            onClick={(e) => {
+              e.preventDefault();
+              navigate('/monitor');
+            }}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-space-border bg-space-elevated px-2.5 py-1 font-mono text-xs font-semibold text-fcText-primary hover:border-lime-brand/60 hover:text-lime-brand transition"
+          >
+            <Activity className="h-3 w-3" />
+            Monitor
+          </a>
 
           <a
             href="https://fhi.intercomputacion.com.ar"
