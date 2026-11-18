@@ -1,0 +1,68 @@
+name: Build and Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/fhipredict:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: ${{ vars.ENABLE_VPS_DEPLOY == 'true' }}
+    steps:
+      - name: Deploy container to Oracle VPS via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: FIRMS_MAP_KEY
+          script: |
+            set -e
+            mkdir -p /opt/fhipredict/monitor_data
+            cat <<EOF > /opt/fhipredict/.env
+            FIRMS_MAP_KEY=${FIRMS_MAP_KEY}
+            EOF
+            chmod 600 /opt/fhipredict/.env
+
+            docker pull ghcr.io/${{ github.repository_owner }}/fhipredict:latest
+            docker stop fhipredict || true
+            docker rm fhipredict || true
+
+            docker run -d \
+              --name fhipredict \
+              --restart unless-stopped \
+              --memory="850m" \
+              --env-file /opt/fhipredict/.env \
+              -p 80:8000 \
+              -v /opt/fhipredict/monitor_data:/app/monitor_data \
+              ghcr.io/${{ github.repository_owner }}/fhipredict:latest
+
+            docker image prune -f
+        env:
+          FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
