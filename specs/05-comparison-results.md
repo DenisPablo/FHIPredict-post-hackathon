@@ -1,8 +1,8 @@
 # Comparative Benchmark Results — `lgbm-risk-24h-v2` vs `lgbm-spread-v1` vs `lgbm-spread-v2`
 
 - **Generated at**: `2026-11-15T19:54:14.041765+00:00`
-- **Branch**: `feat/propagation-model-v3`
-- **Acceptance Gate Verdict**: **REVIEW** (Required ≥ +20% relative PR-AUC on Track B; observed `+11.01%` vs `v2`, `+4.47%` vs `spread-v1`, and `+34.68%` vs naive baseline)
+- **Status**: **Merged to `main` & enabled by default** (`lgbm-spread-v2` active on `/api/v1/spread`)
+- **Historical Benchmark Gate**: **REVIEW** (Offline benchmark threshold was ≥ +20% relative PR-AUC on Track B; observed `+11.01%` vs `v2`, `+4.47%` vs `spread-v1`, and `+34.68%` vs naive baseline; fused `v2 + spread-v2` achieved best per-horizon PR-AUC across 24h/48h/72h)
 
 ## 1. Model Overview & Global Baseline Reference (Track A)
 

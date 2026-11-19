@@ -6,9 +6,15 @@ __pycache__/
 *.egg-info/
 monitor_data/
 *.duckdb*
+backend/uv.lock
+backend/models/.forecast_cache.tmp
 
 # Node / Frontend
 node_modules/
 dist/
+*.tsbuildinfo
 .env
 .env.*.local
+
+# Tooling
+.playwright-mcp/

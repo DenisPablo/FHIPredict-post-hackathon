@@ -1,12 +1,18 @@
-# Proposal 04 — Hotspot Propagation Model (`lgbm-spread-v1`) and Comparative Evaluation
+# Proposal 04 — Hotspot Propagation Model (`lgbm-spread-v1` → `lgbm-spread-v2`) and Comparative Evaluation
 
 | Field | Value |
 |---|---|
-| Status | Draft for review |
-| Branch | `feat/propagation-model-v3` |
-| Baseline model | `lgbm-risk-24h-v2` (current, on `main`) |
-| Candidate model | `lgbm-spread-v1` (new) |
-| Author / Date | FHIPredict team / 2026-11-15 |
+| Status | **Implemented & merged on `main`** (upgraded to `lgbm-spread-v2`) |
+| Branch | `main` (originally developed on `feat/propagation-model-v3`) |
+| Baseline model | `lgbm-risk-24h-v2` (on `main`) |
+| Deployed spread model | `lgbm-spread-v2` (47 features, enabled by default via `ENABLE_SPREAD=true`) |
+| Author / Date | FHIPredict team / 2026-11-15 (reconciled 2026-11-19) |
+
+> **Implementation reconciliation note:** The merged implementation upgraded the original `lgbm-spread-v1` draft to **`lgbm-spread-v2`** (47 features in [backend/app/spread.py](../backend/app/spread.py)):
+> - Training dataset construction lives directly inside [backend/scripts/train_spread.py](../backend/scripts/train_spread.py) (no separate `build_spread_dataset.py`).
+> - Slope (`slope_deg`) and `delta_elev_m` are computed dynamically on neighbor edges in `spread.py:build_neighbor_graph`, while [backend/scripts/export_baseline.py](../backend/scripts/export_baseline.py) enriches `cell_baseline.parquet` with 4 biophysical `fuel_*` fractions and industrial flags (`is_industrial`, `industrial_focos_share`).
+> - Wind alignment uses `cos(radians(wind_from + 180 - bearing))` plus `sin_bearing`/`cos_bearing` (no `aspect` or `slope_alignment`).
+> - Feature flag is `ENABLE_SPREAD` ([backend/app/config.py](../backend/app/config.py)), defaulting to `True`, and `showSpread` defaults to `true` in [frontend/src/App.tsx](../frontend/src/App.tsx); unconfirmed `Alto+` source cells are weighted by `p_risk[s]` in `service.py`.
 
 ## 1. Context and Problem
 

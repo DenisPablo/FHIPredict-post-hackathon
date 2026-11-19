@@ -1,19 +1,21 @@
 # FHIPredict — Implementation Tasks (SDD)
 
 - [x] **T1 — Project Scaffold & Model Artifacts Migration**
-  - Initialize `FHIPredict/` (`git init`, `.gitignore`, `README.md`).
-  - Copy `fire_risk_bundle.joblib` and `fire_risk_metadata.json` from `ModeloPredictivo/models/`.
-  - Export `cell_baseline.parquet` (64,653 active cells with `cell_id`, `lat_centro`, `lon_centro`, `lat_clima`, `lon_clima`, `elevacion_m`, fire memory & monthly climatology) from `ModeloPredictivo` so `FHIPredict` has zero runtime dependency on `ModeloPredictivo`.
+  - Initialize `FHIPredict/`, `.gitignore`, `README.md`, `fire_risk_bundle.joblib`, `fire_risk_metadata.json`, and `cell_baseline.parquet` (`64,653` cells).
 
 - [x] **T2 — FastAPI Inference Backend + Open-Meteo Client**
-  - Implement `FireRiskPredictor` loader, Open-Meteo batch async client (`past_days=30`, `forecast_days=15`), rolling feature builder, and 1h TTL cache.
-  - Expose `GET /api/v1/health` and `GET /api/v1/forecast` (supporting `1d`, `3d`, `7d`, `15d` windows and `day_offset=0..14`, plus `bbox` / `min_risk` filtering).
-  - Add pytest suite (mocked Open-Meteo + real bundle inference).
+  - Implement `FireRiskPredictor`, async Open-Meteo batch client (`past_days=30`, `forecast_days=15`, `971` grid points), rolling weather feature builder, 3h TTL + disk cache (`.forecast_cache.joblib`), and periodic background refresh.
+  - Expose `GET /api/v1/health` and `GET /api/v1/forecast` (`mode=window|day`, `bbox`, `min_risk`, `refresh`).
 
-- [x] **T3 — Minimal MapLibre Frontend (FuegoContinuo Identity)**
-  - Scaffold Vite + React + TypeScript + Tailwind CSS + MapLibre GL with `DESIGN.md` tokens (`#07100F`, `#0D1816`, `#B8EE68`, `Manrope`/`DM Sans`/`DM Mono`).
-  - Full-screen map with risk cell layer, floating header, time-range selector (`24h`, `3d`, `7d`, `15d` + day-by-day slider `Día 1..15`), risk summary chips, and cell inspection popup.
-  - Add Vitest unit tests + `tsc --noEmit` check.
+- [x] **T3 — Interactive MapLibre Frontend (FuegoContinuo Identity)**
+  - Build Vite + React + TypeScript + Tailwind CSS + MapLibre GL UI (`RiskMap`, `TimeRangeBar`, `RiskLegend`, `NavigationPanel`, cell inspection popups, ES/EN i18n).
 
-- [x] **T4 — End-to-End Verification**
-  - Verify backend + frontend locally against live Open-Meteo data, confirm all 15 forecast days and time-range presets render cleanly, and run full test suites.
+- [x] **T4 — Hotspot Propagation Model (`lgbm-spread-v2`)**
+  - Add directional wind variables (`wind_direction_10m_dominant`, `wind_gusts_10m_max`), 8-neighbor graph (`spread.py`), biophysical fuel fractions + industrial filter (`export_baseline.py`), `train_spread.py`, `compare_models.py`, and `GET /api/v1/spread`.
+
+- [x] **T5 — Empirical VIIRS Monitoring System & `/monitor` Dashboard**
+  - Implement daily 24h snapshot persistence (`snapshots.py`), NASA FIRMS VIIRS ingestion + spatial bucket mapping (`firms.py`), pure-NumPy evaluator (`evaluator.py`), and async `/api/v1/monitor/*` endpoints (`monitor/service.py`) bounded to 256 MB DuckDB memory.
+  - Build separate lazy-loaded `/monitor` dashboard (`MonitorDashboard.tsx`) with 3-step reading guide, plain-language summary, charts, and CSV export.
+
+- [x] **T6 — Scientific & Mathematical Integrity Hardening + CI/CD**
+  - Blend live VIIRS fire memory with horizon decay in `ForecastService`, align `mode="window"` to peak daily scale, weight unconfirmed spread sources by `p_risk`, add `[tool.setuptools.packages.find]` in `pyproject.toml`, and add `.github/workflows/deploy.yml`.

@@ -8,7 +8,7 @@
 
 1. **Enriquecer la línea base de celdas (`cell_baseline.parquet`) y descargar dirección histórica de viento (`WD10M`):**
    ```powershell
-   cd C:\Users\Denis\Documents\codigo\FHIPredict\backend
+   cd backend
    .\.venv\Scripts\python.exe scripts/fetch_wd10m.py
    .\.venv\Scripts\python.exe scripts/export_baseline.py
    ```
@@ -75,35 +75,35 @@ Para garantizar que el ensamble GBDT (`LightGBM`) respete las leyes de conservac
 3. **Supresión de fuentes de calor fijo industrial ($\text{constraint}(\mathbb{I}_{\text{ind}}(s)) = -1$):** Las antorchas de venteo gasífero, refinerías e ingenios detectados en `puntos_industriales.parquet` tienen derivada parcial no positiva sobre la propagación hacia celdas vecinas.
 
 ### 1.4 Arquitectura Dual: Cómo Operan `lgbm-risk-24h-v2` y `lgbm-spread-v2` en Conjunto
-En el motor de inferencia en producción ([`ForecastService`](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/app/service.py#L90-L502)), ambos modelos operan en cascada sobre la misma matriz meteorológica cacheada (`WeatherGridForecast`) y la misma tabla base enriquecida (`cell_baseline.parquet`):
+En el motor de inferencia en producción ([`ForecastService`](backend/app/service.py)), ambos modelos operan en cascada sobre la misma matriz meteorológica cacheada (`WeatherGridForecast`), la línea base (`cell_baseline.parquet`) y la memoria ígnea dinámica actualizada desde `ViirsStore` (`monitor.duckdb`) con decaimiento por horizonte:
 
 ```mermaid
 flowchart TD
-    A["Open-Meteo Grid API (971 nodos)<br/>Tmax, RH, Wind Speed, Wind Dir (10m), Gusts, Precip, Rad"] --> B["WeatherGridForecast (15 días)<br/>Rachas secas, Lluvia 7/15/30d, VPD (Magnus-Tetens)"]
-    C["cell_baseline.parquet (64.653 celdas)<br/>Geometría Albers 5x5 km + Memoria Ígnea + 4 Fracciones Fuel + Filtro Industrial"] --> D["Capa 1: lgbm-risk-24h-v2 (20 vars)<br/>Riesgo Base de Ignición p_risk(t)"]
+    A["Open-Meteo Grid API (971 nodos)<br/>Tmax, RH, Wind Speed, Wind Dir (10m), Gusts, Precip, Rad"] --> B["WeatherGridForecast (15 días)<br/>Rachas secas, Lluvia 7/15/30d, VPD (Tetens)"]
+    C["cell_baseline.parquet (64.653 celdas) + ViirsStore<br/>Geometría 5x5 km + Memoria VIIRS en vivo + 4 Fuel + Filtro Industrial"] --> D["Capa 1: lgbm-risk-24h-v2 (20 vars)<br/>Riesgo Base de Ignición p_risk(t)"]
     B --> D
-    D --> E["Selección de Fuentes Activas Wildfire<br/>(focos_7d >= 1 OR p_risk >= Alto) AND is_industrial == 0"]
+    D --> E["Fuentes Wildfire (is_industrial == 0)<br/>Fuego observado (peso 1.0) OR p_risk >= Alto (peso p_risk)"]
     C --> F["Grafo 8-Vecinos (429.722 aristas)<br/>dist_km, bearing, delta_elev, slope_deg"]
-    E --> G["Capa 2: lgbm-spread-v2 (47 vars, H in 24/48/72h)<br/>Probabilidad Dirigida p(s -> t, H)"]
+    E --> G["Capa 2: lgbm-spread-v2 (47 vars, H in 24/48/72h)<br/>p_cond(s -> t, H) * peso_fuente(s)"]
     F --> G
     B --> G
     G --> H["Agregación No-Extinción sobre Vecinos<br/>P_spread(t, H) = 1 - prod_s (1 - p(s -> t, H))"]
-    D --> I["Capa 3: Fusión Probabilística<br/>P_fused(t, H) = 1 - (1 - p_risk(t)) * (1 - w * P_spread(t, H))"]
+    D --> I["Capa 3: Fusión Probabilística<br/>P_fused(t, H) = 1 - (1 - p_risk(t)) * (1 - P_spread(t, H))"]
     H --> I
-    I --> J["Endpoints GeoJSON FastAPI<br/>/api/v1/forecast y /api/v1/spread"]
+    I --> J["Endpoints FastAPI<br/>/api/v1/forecast, /api/v1/spread y /api/v1/monitor/*"]
 ```
 
-1. **Agregación convergente de múltiples frentes sobre una celda destino $t$:** Cuando una celda $t$ es adyacente a múltiples celdas fuente activas $\{s_1, \dots, s_m\} \subset N(t) \cap \mathcal{S}_{d-1}$, la probabilidad neta de invasión por contagio espacial se obtiene bajo independencia condicional de caminos de propagación ([`aggregate_target_probabilities`](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/app/spread.py#L189-L201), implementada con aritmética estable en espacio logarítmico `expm1(sum(log1p(-p)))`):
-   $$P_{\text{spread}}(t, d, H) = 1 - \prod_{s \in N(t) \cap \mathcal{S}_{d-1}} \left(1 - p_{\text{spread}}(s \to t, d, H)\right)$$
-2. **Fusión de ignición endógena y contagio exógeno:** La probabilidad total de fuego en la celda $t$ dentro del horizonte $H$ combina el riesgo basal escalado $p_{\text{risk}}^{(H)}(t) = 1 - (1 - p_{\text{risk}}(t))^H$ con la presión de propagación vecina ponderada por $w_s \in (0, 1]$ ([`fuse_risk_and_spread`](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/app/spread.py#L204-L212)):
-   $$P_{\text{fused}}(t, d, H) = 1 - \left(1 - p_{\text{risk}}^{(H)}(t, d)\right) \cdot \left(1 - w_s \, P_{\text{spread}}(t, d, H)\right)$$
+1. **Ponderación probabilística por estado de la fuente $s$ y agregación convergente sobre $t$:** Las celdas no industriales con fuego reciente confirmado (`focos_7d >= 1.0`) entran con probabilidad de activación $P_{\text{active}}(s) = 1.0$; las celdas sin fuego confirmado que superan el umbral `Alto` entran ponderadas por su probabilidad de ignición $P_{\text{active}}(s) = p_{\text{risk}}(s)$, ponderando tanto los conteos vecinales como cada arista ($p(s \to t) = P_{\text{active}}(s) \cdot p_{\text{cond}}(s \to t)$). Luego, [`aggregate_target_probabilities`](backend/app/spread.py#L189-L201) combina los frentes entrantes con aritmética estable `expm1(sum(log1p(-p)))`:
+   $$P_{\text{spread}}(t, d, H) = 1 - \prod_{s \in N(t)} \left(1 - p_{\text{spread}}(s \to t, d, H)\right)$$
+2. **Fusión de ignición endógena y contagio exógeno:** En `/api/v1/spread` en producción, [`fuse_risk_and_spread`](backend/app/spread.py#L204-L212) combina el riesgo diario base $p_{\text{risk}}(t, d)$ con la propagación $P_{\text{spread}}(t, d, H)$ usando $w_s = 1.0$ (y en el benchmark offline de Track B se evalúa también $w_s = 0.75$ con $p_{\text{risk}}^{(H)}$ escalado al horizonte):
+   $$P_{\text{fused}}(t, d, H) = 1 - \left(1 - p_{\text{risk}}(t, d)\right) \cdot \left(1 - w_s \, P_{\text{spread}}(t, d, H)\right)$$
 
 ---
 
 ## 2. Ingeniería de Variables Libre de Fuga Temporal y Catálogo de 47 Predictores
 
 ### 2.1 Partición Biofísica de Combustible y Filtrado de Calor Industrial
-En [`export_baseline.py`](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/scripts/export_baseline.py), cada una de las `64.653` celdas se enriquece cruzando la máscara oficial [`dim_celdas.parquet`](file:///C:/Users/Denis/Documents/codigo/ML_NasaSpaceApp/serving_api/dim_celdas.parquet) (`grid_row`, `grid_col`, `frac_dentro`, `region`), el catálogo de fuentes térmicas persistentes [`puntos_industriales.parquet`](file:///C:/Users/Denis/Documents/codigo/ML_NasaSpaceApp/serving_api/puntos_industriales.parquet) (`478` complejos industriales auditados mediante reglas de persistencia nocturna y marca `type = 2` de FIRMS) y la climatología MERRA-2 del período estrictamente formativo (`2018–2023`):
+En [`export_baseline.py`](backend/scripts/export_baseline.py), cada una de las `64.653` celdas se enriquece cruzando la máscara oficial `dim_celdas.parquet` (`grid_row`, `grid_col`, `frac_dentro`, `region`), el catálogo de fuentes térmicas persistentes `puntos_industriales.parquet` (`478` complejos industriales auditados mediante reglas de persistencia nocturna y marca `type = 2` de FIRMS) y la climatología MERRA-2 del período estrictamente formativo (`2018–2023`):
 
 - **Celdas industriales identificadas:** `420` celdas de $5 \times 5\text{ km}$ contienen antorchas petroleras, refinerías o centrales térmicas (`is_industrial = 1.0`). Estas celdas arden casi todos los días del año pero no propagan fuego forestal a las celdas adyacentes.
 - **Composición media de combustible en la grilla nacional (`64.653` celdas):**
@@ -115,7 +115,7 @@ En [`export_baseline.py`](file:///C:/Users/Denis/Documents/codigo/FHIPredict/bac
     $$f_{\text{bosque}}(c) + f_{\text{pastizal}}(c) + f_{\text{agro}}(c) + f_{\text{no\_comb}}(c) = 1.0000$$
 
 ### 2.2 Catálogo de las 47 Variables Predictoras (`SPREAD_FEATURE_COLUMNS`) e Importancia Empírica
-La siguiente tabla documenta las **47 variables** del modelo `lgbm-spread-v2` y el número exacto de particiones (*splits*) en los **264 árboles** del ensamble óptimo ([`spread_metadata.json`](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/models/spread_metadata.json)):
+La siguiente tabla documenta las **47 variables** del modelo `lgbm-spread-v2` y el número exacto de particiones (*splits*) en los **264 árboles** del ensamble óptimo ([`spread_metadata.json`](backend/models/spread_metadata.json)):
 
 | Grupo Funcional | Variable | Rol ($s$ / $t$) | Definición Física y Ventana Temporal | Restricción Monótona | Splits (`spread-v2`) |
 | :--- | :--- | :---: | :--- | :---: | ---: |
@@ -205,7 +205,7 @@ El conjunto de datos de propagación comparte exactamente los mismos cortes temp
 
 ### 4.2 Benchmark Head-to-Head en Holdout Ciego 2026 (Todos los Horizontes Combinados)
 
-Se evalúan cinco configuraciones sobre los mismos pares fuente-vecino del año **2026** ([`comparison_report.json`](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/models/comparison_report.json)):
+Se evalúan cinco configuraciones sobre los mismos pares fuente-vecino del año **2026** ([`comparison_report.json`](backend/models/comparison_report.json)):
 1. **`lgbm-spread-v2` (Propuesto):** 47 variables (combustible + filtro industrial + viento direccional histórico `WD10M` + restricciones monótonas).
 2. **`v2 + spread-v2` (Ensamble Fusionado):** Combinación probabilística de `lgbm-risk-24h-v2` escalado al horizonte $H$ y `lgbm-spread-v2` ($w_s = 0.75$).
 3. **`lgbm-spread-v1` (Propagación Inicial):** 32 variables (sin cobertura de combustible, sin filtro industrial ni `WD10M` histórico).
@@ -290,26 +290,28 @@ Los umbrales de las cuatro categorías de peligro de propagación (`Bajo`, `Mode
 ## 8. Registro de Verificación Experimental y Suite de Pruebas Automatizadas
 
 ### 8.1 Telemetría de Ejecución
-- **Comando:** `C:\Users\Denis\Documents\codigo\FHIPredict\backend\.venv\Scripts\python.exe -m pytest tests/test_forecast.py tests/test_spread.py tests/test_model_comparison.py -v`
-- **Entorno:** Windows (`win32`), Python `3.12.10`, `pytest-9.2.0`, `duckdb`, `lightgbm`, `numpy`, `pyarrow`, `fastapi`.
-- **Resultado Global:** **`12 passed in 1.97s`** (verificado adicionalmente en un clon aislado bajo `%TEMP%` por el agente verificador independiente `odd-spread-verifier`: **`12 passed in 2.15s`**, `0` bloqueantes).
+- **Backend (`pytest`)**: `cd backend && .\.venv\Scripts\python.exe -m pytest -q` → **29 tests** cubriendo pronóstico base (`test_forecast.py`), propagación (`test_spread.py`), benchmark comparativo (`test_model_comparison.py`), snapshots 24 h (`test_snapshots.py`), ingesta FIRMS VIIRS (`test_firms.py`), evaluador empírico (`test_evaluator.py`) y API de monitoreo (`test_monitor_api.py`).
+- **Frontend (`vitest` + `tsc`)**: `cd frontend && npm run typecheck && npm test` → **7 tests** across 4 suites (`ConfidenceI18n.test.ts`, `NavigationPanel.test.tsx`, `TimeRangeBar.test.tsx`, `MonitorDashboard.test.tsx`).
 
-### 8.2 Matriz de Pruebas Automatizadas (`12/12 PASSED`)
+### 8.2 Matriz de Pruebas del Núcleo de Propagación y Pronóstico
 
 | ID | Prueba Automatizada | Archivo | Invariante Físico / Contrato Verificado | Estado |
 | :- | :--- | :--- | :--- | :---: |
-| **T1** | `test_rolling_weather_features` | [test_forecast.py](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/tests/test_forecast.py) | Ventanas móviles de lluvia (`7d`, `15d`, `30d`), rachas secas y cálculo de VPD en `build_weather_features`. | **PASSED** |
-| **T2** | `test_bundle_loads_and_predicts` | [test_forecast.py](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/tests/test_forecast.py) | Carga e inferencia calibrada del modelo base `lgbm-risk-24h-v2` (`fire_risk_bundle.joblib`). | **PASSED** |
-| **T3** | `test_health_endpoint` | [test_forecast.py](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/tests/test_forecast.py) | Contrato de `/api/v1/health` (`64.653` celdas, `971` nodos climáticos, retrocompatibilidad intacta). | **PASSED** |
-| **T4** | `test_weather_features_include_wind_direction_and_gusts` | [test_spread.py](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/tests/test_spread.py) | Extracción de `wind_direction_10m_dominant` y `wind_gusts_10m_max` en `WeatherGridForecast`. | **PASSED** |
-| **T5** | `test_bearing_distance_and_wind_alignment` | [test_spread.py](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/tests/test_spread.py) | Geometría esférica de acimut $\beta_{s \to t}$ y signo de alineación eólica ($+1$ a sotavento, $-1$ a barlovento). | **PASSED** |
-| **T6** | `test_neighbor_graph_and_probability_aggregation` | [test_spread.py](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/tests/test_spread.py) | Grafo de 8 vecinos en grilla $3 \times 3$, agregación $1 - \prod(1 - p_i)$ y fusión $1 - (1 - p_r)(1 - p_s)$. | **PASSED** |
-| **T7** | `test_both_model_bundles_load_and_produce_calibrated_probabilities` | [test_model_comparison.py](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/tests/test_model_comparison.py) | Coexistencia de `lgbm-risk-24h-v2` (20 vars) y `lgbm-spread-v2` (47 vars) con probabilidades en $(0, 1)$. | **PASSED** |
-| **T8** | `test_spread_model_monotonic_across_24h_48h_72h_horizons_and_fuel_barriers` | [test_model_comparison.py](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/tests/test_model_comparison.py) | Invariantes monótonos exactos: $\hat{p}_{24\text{h}} \le \hat{p}_{48\text{h}} \le \hat{p}_{72\text{h}}$, atenuación por `fuel_no_combustible_t` y por `is_industrial_s`. | **PASSED** |
-| **T9** | `test_wind_direction_modulates_spread_probability` | [test_model_comparison.py](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/tests/test_model_comparison.py) | Sensibilidad direccional estricta: $\hat{p}(\text{downwind}) > \hat{p}(\text{upwind})$ a igual velocidad de viento. | **PASSED** |
-| **T10** | `test_comparison_report_metrics_and_acceptance_criteria` | [test_model_comparison.py](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/tests/test_model_comparison.py) | Superioridad de `lgbm-spread-v2` sobre `lgbm-spread-v1`, `lgbm-risk-24h-v2` y baseline ingenuo en `24h`, `48h` y `72h`. | **PASSED** |
-| **T11** | `test_inference_latency_budget_both_models` | [test_model_comparison.py](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/tests/test_model_comparison.py) | Presupuesto de latencia en tiempo real ($20.000$ filas evaluadas en $< 0.1\text{ s}$, cota $< 2.0\text{ s}$). | **PASSED** |
-| **T12** | `test_health_and_spread_api_endpoints` | [test_model_comparison.py](file:///C:/Users/Denis/Documents/codigo/FHIPredict/backend/tests/test_model_comparison.py) | Contrato GeoJSON de `/api/v1/spread?horizon_hours=24|48|72` y metadatos en `/api/v1/health`. | **PASSED** |
+| **T1** | `test_rolling_weather_features` | [test_forecast.py](backend/tests/test_forecast.py) | Ventanas móviles de lluvia (`7d`, `15d`, `30d`), rachas secas y cálculo de VPD en `build_weather_features`. | **PASSED** |
+| **T2** | `test_bundle_loads_and_predicts` | [test_forecast.py](backend/tests/test_forecast.py) | Carga e inferencia calibrada del modelo base `lgbm-risk-24h-v2` (`fire_risk_bundle.joblib`). | **PASSED** |
+| **T3** | `test_health_endpoint` | [test_forecast.py](backend/tests/test_forecast.py) | Contrato de `/api/v1/health` (`64.653` celdas, `971` nodos climáticos, retrocompatibilidad intacta). | **PASSED** |
+| **T4** | `test_window_mode_uses_peak_daily_probability_scale` | [test_forecast.py](backend/tests/test_forecast.py) | Coherencia de escala diaria (cota de Fréchet / pico diario) en `mode="window"`. | **PASSED** |
+| **T5** | `test_fire_memory_updates_from_viirs_and_decays_over_horizon` | [test_forecast.py](backend/tests/test_forecast.py) | Mezcla de memoria VIIRS en vivo desde `ViirsStore` y decaimiento móvil a lo largo del horizonte. | **PASSED** |
+| **T6** | `test_weather_features_include_wind_direction_and_gusts` | [test_spread.py](backend/tests/test_spread.py) | Extracción de `wind_direction_10m_dominant` y `wind_gusts_10m_max` en `WeatherGridForecast`. | **PASSED** |
+| **T7** | `test_bearing_distance_and_wind_alignment` | [test_spread.py](backend/tests/test_spread.py) | Geometría esférica de acimut $\beta_{s \to t}$ y signo de alineación eólica ($+1$ a sotavento, $-1$ a barlovento). | **PASSED** |
+| **T8** | `test_neighbor_graph_and_probability_aggregation` | [test_spread.py](backend/tests/test_spread.py) | Grafo de 8 vecinos en grilla $3 \times 3$, agregación $1 - \prod(1 - p_i)$ y fusión $1 - (1 - p_r)(1 - p_s)$. | **PASSED** |
+| **T9** | `test_spread_weights_unconfirmed_high_risk_sources_by_ignition_probability` | [test_spread.py](backend/tests/test_spread.py) | Ponderación probabilística por $p_{\text{risk}}(s)$ en fuentes `Alto+` sin foco observado. | **PASSED** |
+| **T10** | `test_both_model_bundles_load_and_produce_calibrated_probabilities` | [test_model_comparison.py](backend/tests/test_model_comparison.py) | Coexistencia de `lgbm-risk-24h-v2` (20 vars) y `lgbm-spread-v2` (47 vars) con probabilidades en $(0, 1)$. | **PASSED** |
+| **T11** | `test_spread_model_monotonic_across_24h_48h_72h_horizons_and_fuel_barriers` | [test_model_comparison.py](backend/tests/test_model_comparison.py) | Invariantes monótonos exactos: $\hat{p}_{24\text{h}} \le \hat{p}_{48\text{h}} \le \hat{p}_{72\text{h}}$, atenuación por `fuel_no_combustible_t` y por `is_industrial_s`. | **PASSED** |
+| **T12** | `test_wind_direction_modulates_spread_probability` | [test_model_comparison.py](backend/tests/test_model_comparison.py) | Sensibilidad direccional estricta: $\hat{p}(\text{downwind}) > \hat{p}(\text{upwind})$ a igual velocidad de viento. | **PASSED** |
+| **T13** | `test_comparison_report_metrics_and_acceptance_criteria` | [test_model_comparison.py](backend/tests/test_model_comparison.py) | Superioridad de `lgbm-spread-v2` sobre `lgbm-spread-v1`, `lgbm-risk-24h-v2` y baseline ingenuo en `24h`, `48h` y `72h`. | **PASSED** |
+| **T14** | `test_inference_latency_budget_both_models` | [test_model_comparison.py](backend/tests/test_model_comparison.py) | Presupuesto de latencia en tiempo real ($20.000$ filas evaluadas en $< 0.1\text{ s}$, cota $< 2.0\text{ s}$). | **PASSED** |
+| **T15** | `test_health_and_spread_api_endpoints` | [test_model_comparison.py](backend/tests/test_model_comparison.py) | Contrato GeoJSON de `/api/v1/spread?horizon_hours=24|48|72` y metadatos en `/api/v1/health`. | **PASSED** |
 
 ---
 

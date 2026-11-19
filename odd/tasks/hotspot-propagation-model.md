@@ -1,6 +1,6 @@
-# Objective: Implement `lgbm-spread-v1` hotspot propagation model (24h–72h) and head-to-head comparative benchmark against `lgbm-risk-24h-v2`
-Branch: `feat/propagation-model-v3` | Delivery strategy: `single-pr` (forecast ~450 lines across code, training, benchmark, and tests; `exception-ok` if slightly over 400 to keep tests/docs with code)
-Test runner: `C:\Users\Denis\Documents\codigo\FHIPredict\backend\.venv\Scripts\pytest.exe`
+# Objective: Implement `lgbm-spread-v1` → `lgbm-spread-v2` hotspot propagation model (24h–72h) and head-to-head comparative benchmark against `lgbm-risk-24h-v2`
+Branch: `feat/propagation-model-v3` (merged to `main` in `5159078`) | Delivery strategy: `single-pr`
+Test runner: `backend/.venv/Scripts/python.exe -m pytest`
 
 ## Specs
 
@@ -29,8 +29,8 @@ Test runner: `C:\Users\Denis\Documents\codigo\FHIPredict\backend\.venv\Scripts\p
 - [x] **T1** (S1) — Implement weather directional features (`openmeteo.py`), spatial propagation module (`spread.py`), API/service integration (`config.py`, `service.py`, `main.py`), and unit tests (`tests/test_spread.py`) | Route: `inline` (sequential foundation required by T2/T3; no Writer trigger) | Status: `done` (`b3324e1`, RED `ModuleNotFoundError: No module named 'app.spread'` -> GREEN `6 passed in 1.87s`)
 - [x] **T2** (S2) — Implement `scripts/train_spread.py`, train `lgbm-spread-v1` on 2018–2023 (val 2024–2025, test 2026), and export `models/spread_bundle.joblib` + `models/spread_metadata.json` | Route: `inline` (depends on T1 `SpreadPredictor` schema) | Status: `done` (`baa367a`, trained 1,171,634 pairs, val PR-AUC=0.2922, test PR-AUC=0.3945, test ROC-AUC=0.8749)
 - [x] **T3** (S3) — Implement `scripts/compare_models.py`, run full benchmark generating `models/comparison_report.json` and `specs/05-comparison-results.md`, and add `tests/test_model_comparison.py` | Route: `inline` (depends on T2 trained bundle) | Status: `done` (`46c605a`, RED `AssertionError: comparison_report.json must be generated` -> GREEN `12 passed in 3.00s`)
-- [x] **T4** (S4) — Enrich `cell_baseline.parquet` (`scripts/export_baseline.py`) with `dim_celdas.parquet`, `puntos_industriales.parquet`, and 4 fuel/land-cover fractions (`fuel_bosque`, `fuel_pastizal`, `fuel_agro`, `fuel_no_combustible`), and ingest historical `WD10M` directional wind (`models/nasapower_wd10m.parquet` via `scripts/fetch_wd10m.py`) | Route: `inline` (sequential data dependency for T5) | Status: `done` (`4339284`, 7,594,002 WD10M rows; 64,653 enriched cells, 420 industrial cells)
-- [x] **T5** (S4) — Upgrade `spread.py`, `service.py`, `train_spread.py`, and `compare_models.py` for `lgbm-spread-v2`, retrain `spread_bundle.joblib`, re-run comparative benchmark (`v2` vs `spread-v1` vs `spread-v2`), update `specs/05-comparison-results.md` and `tests/test_model_comparison.py` | Route: `inline` (depends on T4 baseline + wind data) | Status: `done` (val PR-AUC=0.3040, test PR-AUC=0.4125 [+11.01% vs v2, +4.47% vs spread-v1, +34.68% vs naive], 24h fused PR-AUC=0.4443)
+- [x] **T4** (S4) — Enrich `cell_baseline.parquet` (`scripts/export_baseline.py`) with `dim_celdas.parquet`, `puntos_industriales.parquet`, and 4 fuel/land-cover fractions (`fuel_bosque`, `fuel_pastizal`, `fuel_agro`, `fuel_no_combustible`), and ingest historical `WD10M` directional wind (external `ModeloPredictivo/.../wd10m_2018_2026.parquet` via `scripts/fetch_wd10m.py`) | Route: `inline` (sequential data dependency for T5) | Status: `done` (`4339284`, 7,594,002 WD10M rows; 64,653 enriched cells, 420 industrial cells)
+- [x] **T5** (S4) — Upgrade `spread.py`, `service.py`, `train_spread.py`, and `compare_models.py` for `lgbm-spread-v2`, retrain `spread_bundle.joblib`, re-run comparative benchmark (`v2` vs `spread-v1` vs `spread-v2`), update `specs/05-comparison-results.md` and `tests/test_model_comparison.py` | Route: `inline` (depends on T4 baseline + wind data) | Status: `done` (`5159078`, val PR-AUC=0.3040, test PR-AUC=0.4125 [+11.01% vs v2, +4.47% vs spread-v1, +34.68% vs naive], 24h fused PR-AUC=0.4443)
 
 ## Log
 

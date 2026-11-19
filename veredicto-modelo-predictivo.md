@@ -1,6 +1,14 @@
 # Veredicto científico: ModeloPredictivo-2026 (`lgbm-risk-24h-v2`)
 
-**Veredicto: sólido con reservas como índice de riesgo del día; todavía no es un pronóstico.**
+> [!NOTE]
+> **Contexto histórico vs. estado actual en `FHIPredict` (actualizado 2026-11-19):**
+> Este documento es la auditoría histórica del repositorio previo **`ModeloPredictivo-2026`** (`commit a18d981`, 2026-11-15) sobre el artefacto `lgbm-risk-24h-v2`. Varias de sus reservas iniciales **ya fueron resueltas en `FHIPredict`**:
+> - **M2 / M3 (pronóstico meteorológico real)**: `FHIPredict` reemplaza las tablas estáticas retrospectivas por pronósticos en vivo de Open-Meteo (`past_days=30`, `forecast_days=15`).
+> - **Memoria de fuego dinámica**: `ForecastService` mezcla las detecciones diarias de NASA FIRMS VIIRS (`monitor.duckdb`) con `cell_baseline.parquet` y decae las ventanas móviles a lo largo del horizonte (`service.py`).
+> - **Escala de ventanas y monitoreo empírico**: `mode="window"` usa la probabilidad diaria pico (cota de Fréchet en la misma escala de 24 h), y el dashboard `/monitor` mide diariamente `ROC-AUC`, `PR-AUC`, `calibration_ratio` y `Hits / Misses` contra VIIRS.
+> - **Siguen vigentes como propiedades del artefacto entrenado (`fire_risk_bundle.joblib`)**: las observaciones **M1** y **M4–M11** (ej. sesgo de selección en las 64.653 celdas históricas, incertidumbre del PR-AUC y necesidad de recalibrar umbrales tras acumular muestra en producción).
+
+**Veredicto histórico (sobre `ModeloPredictivo-2026`):** sólido con reservas como índice de riesgo del día; todavía no era un pronóstico antes de integrarle Open-Meteo.
 
 Las métricas declaradas se reproducen exactas, la memoria de fuego no tiene fuga temporal y la corrección de probabilidad está bien hecha. Las reservas son tres:
 - usa el clima observado del mismo día que predice;

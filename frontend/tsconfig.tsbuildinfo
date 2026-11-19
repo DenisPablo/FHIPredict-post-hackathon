@@ -1,1 +1,0 @@
-{"root":["./src/app.tsx","./src/i18n.ts","./src/main.tsx","./src/vite-env.d.ts","./src/api/forecast.ts","./src/components/navigationpanel.tsx","./src/components/risklegend.tsx","./src/components/riskmap.tsx","./src/components/timerangebar.tsx","./src/data/provinces.ts","./tests/navigationpanel.test.tsx","./tests/timerangebar.test.tsx"],"version":"5.9.3"}

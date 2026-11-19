@@ -1,4 +1,0 @@
-[     859ms] [ERROR] Error: Worker failed to load. Check that the worker URL is correct.
-    at Worker.<anonymous> (https://fhipredict.intercomputacion.com.ar/assets/maplibre-lH7sVMpj.js:5:19226) @ https://fhipredict.intercomputacion.com.ar/assets/maplibre-lH7sVMpj.js:4
-[     859ms] [ERROR] Error: Worker failed to load. Check that the worker URL is correct.
-    at Worker.<anonymous> (https://fhipredict.intercomputacion.com.ar/assets/maplibre-lH7sVMpj.js:5:19226) @ https://fhipredict.intercomputacion.com.ar/assets/maplibre-lH7sVMpj.js:4
