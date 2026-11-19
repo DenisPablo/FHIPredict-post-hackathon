@@ -65,6 +65,7 @@ describe('MonitorDashboard', () => {
 
     expect(screen.getByText('8 / 4')).toBeInTheDocument();
     expect(screen.getByText('120')).toBeInTheDocument();
+    expect(screen.getByText(/¿Cómo leer estos datos\?/i)).toBeInTheDocument();
     expect(screen.getByText(/Resumen en lenguaje simple/i)).toBeInTheDocument();
     expect(screen.getAllByText(/66\.7%/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/Desglose por categoría/i)).toBeInTheDocument();

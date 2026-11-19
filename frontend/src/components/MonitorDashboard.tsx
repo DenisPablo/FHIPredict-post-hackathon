@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, ArrowLeft, Download, Globe, Loader2, Play } from 'lucide-react';
+import { Activity, ArrowLeft, Download, Globe, HelpCircle, Loader2, Play } from 'lucide-react';
 import {
   buildMonitorCsv,
   fetchMonitorMetrics,
@@ -56,6 +56,7 @@ export function MonitorDashboard({ lang, onToggleLang, onBackToMap }: MonitorDas
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [isTriggering, setIsTriggering] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [showGuide, setShowGuide] = useState(true);
 
   const metricsQuery = useQuery({
     queryKey: ['monitor-metrics'],
@@ -136,6 +137,19 @@ export function MonitorDashboard({ lang, onToggleLang, onBackToMap }: MonitorDas
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
+              onClick={() => setShowGuide((prev) => !prev)}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-mono text-xs font-semibold transition ${
+                showGuide
+                  ? 'border-lime-brand/40 bg-lime-brand/10 text-lime-brand'
+                  : 'border-space-border bg-space-elevated text-fcText-primary hover:border-space-borderLight'
+              }`}
+            >
+              <HelpCircle className="h-3.5 w-3.5" />
+              {isEs ? 'Guía' : 'Guide'}
+            </button>
+
+            <button
+              type="button"
               onClick={handleDownloadCsv}
               disabled={items.length === 0}
               className="inline-flex items-center gap-1.5 rounded-lg border border-space-border bg-space-elevated px-3 py-1.5 font-mono text-xs font-semibold text-fcText-primary hover:border-space-borderLight disabled:opacity-40 transition"
@@ -177,6 +191,8 @@ export function MonitorDashboard({ lang, onToggleLang, onBackToMap }: MonitorDas
             {runError || statusQuery.data?.last_error}
           </div>
         )}
+
+        {showGuide && <QuickInterpretationGuide isEs={isEs} onHide={() => setShowGuide(false)} />}
 
         {metricsQuery.isLoading ? (
           <div className="flex items-center gap-2 font-mono text-sm text-fcText-secondary">
@@ -588,6 +604,94 @@ function DailyHistoryChart({
         })}
       </div>
     </div>
+  );
+}
+
+function QuickInterpretationGuide({ isEs, onHide }: { isEs: boolean; onHide: () => void }) {
+  return (
+    <section className="rounded-2xl border border-lime-brand/25 bg-space-surface/95 p-4 sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="font-title text-sm font-bold text-fcText-primary">
+            {isEs ? '¿Cómo leer estos datos? Los 3 números clave' : 'How to read this: the 3 key numbers'}
+          </h2>
+          <p className="mt-0.5 text-xs text-fcText-secondary">
+            {isEs
+              ? 'Evaluá siempre días ya cerrados (ayer o anteriores), no el día de hoy porque faltan pasadas de satélite.'
+              : 'Always evaluate completed days (yesterday or earlier), not today while satellite passes are still incoming.'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onHide}
+          className="rounded-lg border border-space-border bg-space-elevated px-2.5 py-1 font-mono text-[11px] text-fcText-secondary hover:text-fcText-primary transition"
+        >
+          {isEs ? 'Ocultar guía' : 'Hide guide'}
+        </button>
+      </div>
+
+      <div className="mt-3 grid gap-3 md:grid-cols-3">
+        <div className="rounded-xl border border-space-border bg-space-elevated/50 p-3">
+          <div className="font-mono text-xs font-bold text-lime-brand">
+            1. {isEs ? '¿Acertó dónde hubo fuego?' : 'Did it catch real fires?'}
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-fcText-secondary">
+            {isEs ? (
+              <>
+                Mirá <strong className="text-fcText-primary">Hits / Misses</strong> y la barra verde: indica
+                cuántos incendios reales estaban dentro de las zonas en alerta previa (utilidad operativa real).
+              </>
+            ) : (
+              <>
+                Check <strong className="text-fcText-primary">Hits / Misses</strong> and the green bar: how
+                many real fires fell inside pre-alerted zones (real operational value).
+              </>
+            )}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-space-border bg-space-elevated/50 p-3">
+          <div className="font-mono text-xs font-bold text-[#68D9D0]">
+            2. {isEs ? '¿Ordena bien el peligro?' : 'Does it rank danger well?'}
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-fcText-secondary">
+            {isEs ? (
+              <>
+                Mirá <strong className="text-fcText-primary">ROC-AUC</strong> (0.5 = azar, 1.0 = perfecto).
+                Arriba de <strong className="text-fcText-primary">0.85</strong> confirma que el modelo distingue
+                bien las zonas más peligrosas.
+              </>
+            ) : (
+              <>
+                Check <strong className="text-fcText-primary">ROC-AUC</strong> (0.5 = random, 1.0 = perfect).
+                Above <strong className="text-fcText-primary">0.85</strong> confirms the model ranks danger well.
+              </>
+            )}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-space-border bg-space-elevated/50 p-3">
+          <div className="font-mono text-xs font-bold text-[#FF9C55]">
+            3. {isEs ? '¿Son creíbles los porcentajes?' : 'Are probabilities on scale?'}
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-fcText-secondary">
+            {isEs ? (
+              <>
+                Mirá <strong className="text-fcText-primary">Calibración</strong> (esperado / real). Cerca de{' '}
+                <strong className="text-fcText-primary">1.0</strong> es ideal; debajo de 0.5 indica que el
+                umbral de alerta está muy estricto.
+              </>
+            ) : (
+              <>
+                Check <strong className="text-fcText-primary">Calibration</strong> (expected / real). Near{' '}
+                <strong className="text-fcText-primary">1.0</strong> is ideal; below 0.5 means alert thresholds
+                are too strict.
+              </>
+            )}
+          </p>
+        </div>
+      </div>
+    </section>
   );
 }
 
