@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, ArrowLeft, Globe, Loader2, Play } from 'lucide-react';
+import { Activity, ArrowLeft, Download, Globe, Loader2, Play } from 'lucide-react';
 import {
+  buildMonitorCsv,
   fetchMonitorMetrics,
   fetchMonitorStatus,
   triggerMonitorRun,
@@ -18,6 +19,13 @@ interface MonitorDashboardProps {
 
 const CATEGORIES: RiskCategory[] = ['Extremo', 'Alto', 'Moderado', 'Bajo'];
 
+const CAT_COLOR: Record<RiskCategory, string> = {
+  Extremo: '#FF6759',
+  Alto: '#FF9C55',
+  Moderado: '#68D9D0',
+  Bajo: '#64748B',
+};
+
 function fmt(val: number | null | undefined, digits = 3): string {
   if (val === null || val === undefined || Number.isNaN(val)) return '—';
   return val.toFixed(digits);
@@ -26,6 +34,20 @@ function fmt(val: number | null | undefined, digits = 3): string {
 function fmtPct(val: number | null | undefined): string {
   if (val === null || val === undefined || Number.isNaN(val)) return '—';
   return `${(val * 100).toFixed(2)}%`;
+}
+
+function rocBadge(roc: number | null, isEs: boolean): { text: string; tone: string } {
+  if (roc === null) return { text: isEs ? 'Sin focos' : 'No fires', tone: 'text-fcText-secondary' };
+  if (roc >= 0.85) return { text: isEs ? 'Excelente' : 'Excellent', tone: 'text-lime-brand' };
+  if (roc >= 0.7) return { text: isEs ? 'Bueno' : 'Good', tone: 'text-[#68D9D0]' };
+  return { text: isEs ? 'A mejorar' : 'Needs work', tone: 'text-[#FF9C55]' };
+}
+
+function calibBadge(cal: number | null, isEs: boolean): { text: string; tone: string } {
+  if (cal === null) return { text: isEs ? 'Sin focos' : 'No fires', tone: 'text-fcText-secondary' };
+  if (cal >= 0.7 && cal <= 1.5) return { text: isEs ? 'Bien calibrado' : 'Well calibrated', tone: 'text-lime-brand' };
+  if (cal > 1.5) return { text: isEs ? 'Sobreestima / día en curso' : 'Overestimates / partial day', tone: 'text-[#FF9C55]' };
+  return { text: isEs ? 'Subestima' : 'Underestimates', tone: 'text-[#FF6759]' };
 }
 
 export function MonitorDashboard({ lang, onToggleLang, onBackToMap }: MonitorDashboardProps) {
@@ -61,10 +83,27 @@ export function MonitorDashboard({ lang, onToggleLang, onBackToMap }: MonitorDas
     }
   }
 
+  function handleDownloadCsv() {
+    if (items.length === 0) return;
+    const csv = buildMonitorCsv(items);
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'fhipredict-monitoreo-viirs.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
   const items: MonitorMetricItem[] = metricsQuery.data?.items ?? [];
   const activeItem =
     (selectedDate ? items.find((i) => i.target_date === selectedDate) : undefined) ?? items[0];
   const isRunning = Boolean(statusQuery.data?.running || isTriggering);
+
+  const rocInfo = activeItem ? rocBadge(activeItem.roc_auc, isEs) : null;
+  const calInfo = activeItem ? calibBadge(activeItem.calibration_ratio, isEs) : null;
 
   return (
     <div className="min-h-screen bg-space-base text-fcText-primary">
@@ -94,7 +133,17 @@ export function MonitorDashboard({ lang, onToggleLang, onBackToMap }: MonitorDas
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleDownloadCsv}
+              disabled={items.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-space-border bg-space-elevated px-3 py-1.5 font-mono text-xs font-semibold text-fcText-primary hover:border-space-borderLight disabled:opacity-40 transition"
+            >
+              <Download className="h-3.5 w-3.5 text-fcText-secondary" />
+              {isEs ? 'Descargar CSV' : 'Download CSV'}
+            </button>
+
             <button
               type="button"
               onClick={handleRun}
@@ -142,20 +191,54 @@ export function MonitorDashboard({ lang, onToggleLang, onBackToMap }: MonitorDas
           </div>
         ) : (
           <>
+            <PlainLanguageSummary item={activeItem} isEs={isEs} />
+
             <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-              <MetricCard label="PR-AUC" value={fmt(activeItem.pr_auc)} />
-              <MetricCard label="ROC-AUC" value={fmt(activeItem.roc_auc)} />
-              <MetricCard label={isEs ? 'Calibración' : 'Calibration'} value={fmt(activeItem.calibration_ratio, 2)} />
-              <MetricCard label="Brier" value={fmt(activeItem.brier_score, 5)} />
+              <MetricCard
+                label="ROC-AUC"
+                value={fmt(activeItem.roc_auc)}
+                badge={rocInfo?.text}
+                badgeTone={rocInfo?.tone}
+                hint={isEs ? 'Prioridad territorial (1.0 = ideal)' : 'Spatial ranking (1.0 = ideal)'}
+              />
+              <MetricCard
+                label="PR-AUC"
+                value={fmt(activeItem.pr_auc)}
+                hint={isEs ? 'Precisión en zonas de alerta' : 'Alert precision-recall area'}
+              />
+              <MetricCard
+                label={isEs ? 'Calibración' : 'Calibration'}
+                value={fmt(activeItem.calibration_ratio, 2)}
+                badge={calInfo?.text}
+                badgeTone={calInfo?.tone}
+                hint={isEs ? 'Esperado / Real (1.0 = exacto)' : 'Expected / Real (1.0 = exact)'}
+              />
+              <MetricCard
+                label="Brier"
+                value={fmt(activeItem.brier_score, 5)}
+                hint={isEs ? 'Error cuadrático (menor = mejor)' : 'Squared prob. error (lower = better)'}
+              />
               <MetricCard
                 label="Hits / Misses"
                 value={`${activeItem.hits_count} / ${activeItem.misses_count}`}
                 accent="text-lime-brand"
+                hint={isEs ? 'Focos en alerta vs. fuera de alerta' : 'Caught vs. missed fires'}
               />
               <MetricCard
                 label={isEs ? 'Falsas Alarmas' : 'False Alarms'}
                 value={String(activeItem.false_alarms_count)}
                 accent="text-[#FF9C55]"
+                hint={isEs ? 'Celdas en alerta sin fuego hoy' : 'Alerted cells without fire'}
+              />
+            </section>
+
+            <section className="grid gap-6 lg:grid-cols-2">
+              <CategoryCaptureChart item={activeItem} isEs={isEs} />
+              <DailyHistoryChart
+                items={items}
+                selectedDate={activeItem.target_date}
+                onSelectDate={setSelectedDate}
+                isEs={isEs}
               />
             </section>
 
@@ -245,13 +328,315 @@ export function MonitorDashboard({ lang, onToggleLang, onBackToMap }: MonitorDas
   );
 }
 
-function MetricCard({ label, value, accent }: { label: string; value: string; accent?: string }) {
+function PlainLanguageSummary({ item, isEs }: { item: MonitorMetricItem; isEs: boolean }) {
+  const alertCells =
+    (item.categories?.Extremo?.cells_count ?? 0) +
+    (item.categories?.Alto?.cells_count ?? 0) +
+    (item.categories?.Moderado?.cells_count ?? 0);
+  const alertSharePct = item.n_cells > 0 ? ((alertCells / item.n_cells) * 100).toFixed(2) : '0.00';
+  const capturePct = item.n_positives > 0 ? ((item.hits_count / item.n_positives) * 100).toFixed(1) : '0.0';
+  const expectedPos = (item.mean_predicted_prob * item.n_cells).toFixed(1);
+
+  return (
+    <section className="rounded-2xl border border-space-border bg-space-surface p-4 sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-title text-sm font-bold text-fcText-primary">
+          {isEs
+            ? `Resumen en lenguaje simple (${item.target_date})`
+            : `Plain-language summary (${item.target_date})`}
+        </h2>
+        <span className="rounded-full border border-space-border bg-space-elevated px-2.5 py-0.5 font-mono text-[11px] text-fcText-secondary">
+          {isEs
+            ? `Territorio en alerta: ${alertCells} / ${item.n_cells.toLocaleString('es-AR')} celdas (${alertSharePct}%)`
+            : `Alerted territory: ${alertCells} / ${item.n_cells.toLocaleString('en-US')} cells (${alertSharePct}%)`}
+        </span>
+      </div>
+
+      <div className="mt-3 grid gap-4 md:grid-cols-2">
+        <div className="space-y-2 text-xs leading-relaxed text-fcText-secondary">
+          <p>
+            {item.n_positives === 0 ? (
+              isEs ? (
+                'El satélite VIIRS no registró incendios confirmados (≥ 10 MW) en esta fecha.'
+              ) : (
+                'The VIIRS satellite recorded zero confirmed fires (≥ 10 MW) on this date.'
+              )
+            ) : isEs ? (
+              <>
+                Se detectaron <strong className="text-fcText-primary">{item.n_positives}</strong> zonas con
+                incendio real en el país. El sistema había puesto en alerta previa al{' '}
+                <strong className="text-lime-brand">{capturePct}%</strong> ({item.hits_count} aciertos y{' '}
+                {item.misses_count} fuera de alerta) vigilando solo el{' '}
+                <strong className="text-fcText-primary">{alertSharePct}%</strong> del territorio.
+              </>
+            ) : (
+              <>
+                Satellites detected <strong className="text-fcText-primary">{item.n_positives}</strong> active
+                fire zones nationwide. Pre-issued alerts captured{' '}
+                <strong className="text-lime-brand">{capturePct}%</strong> ({item.hits_count} hits and{' '}
+                {item.misses_count} misses) while monitoring only{' '}
+                <strong className="text-fcText-primary">{alertSharePct}%</strong> of the territory.
+              </>
+            )}
+          </p>
+          <p>
+            {isEs ? (
+              <>
+                El modelo estimaba <strong className="text-fcText-primary">~{expectedPos}</strong> focos para
+                las 24 h completas (contra <strong className="text-fcText-primary">{item.n_positives}</strong>{' '}
+                observados).
+                {item.calibration_ratio !== null && item.calibration_ratio > 2.0
+                  ? ' Si la fecha es hoy, la diferencia es normal porque faltan pasadas satelitales de la tarde.'
+                  : ''}
+              </>
+            ) : (
+              <>
+                The model expected <strong className="text-fcText-primary">~{expectedPos}</strong> fire zones
+                for the full 24h window (vs.{' '}
+                <strong className="text-fcText-primary">{item.n_positives}</strong> observed).
+                {item.calibration_ratio !== null && item.calibration_ratio > 2.0
+                  ? ' For an in-progress day, this gap is expected until afternoon satellite passes arrive.'
+                  : ''}
+              </>
+            )}
+          </p>
+        </div>
+
+        <div className="flex flex-col justify-center rounded-xl border border-space-border bg-space-elevated/50 p-3.5">
+          <div className="flex items-center justify-between font-mono text-xs">
+            <span className="text-fcText-secondary">
+              {isEs ? 'Cobertura de focos reales en alerta' : 'Real fires captured in alert'}
+            </span>
+            <span className="font-bold text-lime-brand">{capturePct}%</span>
+          </div>
+          <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-space-base">
+            <div
+              className="h-full rounded-full bg-lime-brand transition-all duration-500"
+              style={{
+                width: `${item.n_positives > 0 ? Math.min(100, (item.hits_count / item.n_positives) * 100) : 0}%`,
+              }}
+            />
+          </div>
+          <div className="mt-2 flex justify-between font-mono text-[11px] text-fcText-secondary">
+            <span>
+              {isEs ? `Aciertos (Hits): ${item.hits_count}` : `Hits: ${item.hits_count}`}
+            </span>
+            <span>
+              {isEs ? `No alertados (Misses): ${item.misses_count}` : `Misses: ${item.misses_count}`}
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CategoryCaptureChart({ item, isEs }: { item: MonitorMetricItem; isEs: boolean }) {
+  const maxWidth = 220;
+
+  return (
+    <div className="rounded-2xl border border-space-border bg-space-surface p-4">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-title text-sm font-bold">
+          {isEs ? 'Captura de incendios por nivel de riesgo' : 'Fire capture by risk level'}
+        </h2>
+        <span className="font-mono text-[11px] text-fcText-secondary">{item.target_date}</span>
+      </div>
+      <p className="mt-1 text-xs text-fcText-secondary">
+        {isEs
+          ? 'Porcentaje de focos reales detectados dentro de cada categoría y cuántas veces supera al azar (Lift).'
+          : 'Share of real fires falling inside each risk category and improvement over random (Lift).'}
+      </p>
+
+      <svg
+        role="img"
+        aria-label={isEs ? 'Gráfico de captura por nivel de riesgo' : 'Risk level capture chart'}
+        viewBox="0 0 460 156"
+        className="mt-3 w-full"
+      >
+        {CATEGORIES.map((cat, idx) => {
+          const row = item.categories?.[cat];
+          const recall = row?.recall ?? 0;
+          const barW = Math.max(2, recall * maxWidth);
+          const y = 14 + idx * 35;
+          const liftText =
+            row?.lift !== null && row?.lift !== undefined ? `${row.lift.toFixed(1)}x` : '—';
+          return (
+            <g key={cat} transform={`translate(0, ${y})`}>
+              <text x="0" y="15" fill="#E2E8F0" fontSize="11" fontFamily="monospace" fontWeight="600">
+                {cat}
+              </text>
+              <rect x="78" y="4" width={maxWidth} height="14" rx="4" fill="#1E293B" />
+              <rect x="78" y="4" width={barW} height="14" rx="4" fill={CAT_COLOR[cat]} />
+              <text x="308" y="15" fill="#E2E8F0" fontSize="11" fontFamily="monospace">
+                {(recall * 100).toFixed(0)}% ({row?.positives_count ?? 0})
+              </text>
+              <text x="382" y="15" fill="#94A3B8" fontSize="10" fontFamily="monospace">
+                {isEs ? `Lift ${liftText}` : `Lift ${liftText}`}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function DailyHistoryChart({
+  items,
+  selectedDate,
+  onSelectDate,
+  isEs,
+}: {
+  items: MonitorMetricItem[];
+  selectedDate: string;
+  onSelectDate: (d: string) => void;
+  isEs: boolean;
+}) {
+  const chronological = items.slice(0, 14).reverse();
+  const chartW = 460;
+  const chartH = 156;
+  const padLeft = 30;
+  const padBottom = 26;
+  const plotW = chartW - padLeft - 16;
+  const plotH = chartH - padBottom - 16;
+  const maxPos = Math.max(1, ...chronological.map((d) => d.n_positives));
+  const stepX = plotW / Math.max(1, chronological.length);
+  const barW = Math.min(28, Math.max(10, stepX * 0.55));
+
+  const rocPoints = chronological
+    .map((d, idx) => {
+      if (d.roc_auc === null) return null;
+      const x = padLeft + idx * stepX + stepX / 2;
+      const y = 12 + (1 - Math.min(1, Math.max(0, d.roc_auc))) * plotH;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .filter((p): p is string => p !== null)
+    .join(' ');
+
+  return (
+    <div className="rounded-2xl border border-space-border bg-space-surface p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-title text-sm font-bold">
+          {isEs ? 'Evolución diaria: Aciertos vs. Omitidos' : 'Daily trend: Hits vs. Misses'}
+        </h2>
+        <div className="flex items-center gap-3 font-mono text-[10px] text-fcText-secondary">
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2 w-2 rounded-sm bg-lime-brand" /> Hits
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2 w-2 rounded-sm bg-[#FF6759]" /> Misses
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2 w-2 rounded-full bg-[#68D9D0]" /> ROC-AUC
+          </span>
+        </div>
+      </div>
+      <p className="mt-1 text-xs text-fcText-secondary">
+        {isEs
+          ? 'Hacé clic en un día para ver su detalle. La línea celeste muestra la capacidad de ordenamiento (ROC-AUC).'
+          : 'Click any day to inspect details. The cyan line tracks ranking accuracy (ROC-AUC).'}
+      </p>
+
+      <svg
+        role="img"
+        aria-label={isEs ? 'Gráfico de evolución diaria' : 'Daily evolution chart'}
+        viewBox={`0 0 ${chartW} ${chartH}`}
+        className="mt-3 w-full"
+      >
+        <line x1={padLeft} y1={12 + plotH} x2={chartW - 10} y2={12 + plotH} stroke="#334155" strokeWidth="1" />
+        <text x="2" y="18" fill="#94A3B8" fontSize="9" fontFamily="monospace">
+          {maxPos}
+        </text>
+        <text x="8" y={12 + plotH} fill="#94A3B8" fontSize="9" fontFamily="monospace">
+          0
+        </text>
+
+        {chronological.map((d, idx) => {
+          const xCenter = padLeft + idx * stepX + stepX / 2;
+          const x = xCenter - barW / 2;
+          const hitH = (d.hits_count / maxPos) * plotH;
+          const missH = (d.misses_count / maxPos) * plotH;
+          const yHit = 12 + plotH - hitH;
+          const yMiss = yHit - missH;
+          const isSel = d.target_date === selectedDate;
+          return (
+            <g
+              key={d.target_date}
+              onClick={() => onSelectDate(d.target_date)}
+              className="cursor-pointer"
+            >
+              {isSel && (
+                <rect
+                  x={x - 3}
+                  y={10}
+                  width={barW + 6}
+                  height={plotH + 4}
+                  rx="4"
+                  fill="#1E293B"
+                  opacity="0.7"
+                />
+              )}
+              {missH > 0 && (
+                <rect x={x} y={yMiss} width={barW} height={missH} rx="2" fill="#FF6759" />
+              )}
+              {hitH > 0 && (
+                <rect x={x} y={yHit} width={barW} height={hitH} rx="2" fill="#B3E54E" />
+              )}
+              <text
+                x={xCenter}
+                y={chartH - 7}
+                textAnchor="middle"
+                fill={isSel ? '#E2E8F0' : '#94A3B8'}
+                fontSize="9"
+                fontFamily="monospace"
+                fontWeight={isSel ? '700' : '400'}
+              >
+                {d.target_date.slice(5)}
+              </text>
+            </g>
+          );
+        })}
+
+        {rocPoints.includes(' ') && (
+          <polyline fill="none" stroke="#68D9D0" strokeWidth="2" points={rocPoints} />
+        )}
+        {chronological.map((d, idx) => {
+          if (d.roc_auc === null) return null;
+          const x = padLeft + idx * stepX + stepX / 2;
+          const y = 12 + (1 - Math.min(1, Math.max(0, d.roc_auc))) * plotH;
+          return <circle key={`pt-${d.target_date}`} cx={x} cy={y} r="3.2" fill="#68D9D0" />;
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+  accent,
+  badge,
+  badgeTone,
+  hint,
+}: {
+  label: string;
+  value: string;
+  accent?: string;
+  badge?: string;
+  badgeTone?: string;
+  hint?: string;
+}) {
   return (
     <div className="rounded-2xl border border-space-border bg-space-surface p-3.5">
-      <div className="font-mono text-[11px] text-fcText-secondary">{label}</div>
+      <div className="flex items-center justify-between gap-1">
+        <span className="font-mono text-[11px] text-fcText-secondary">{label}</span>
+        {badge && <span className={`font-mono text-[10px] font-semibold ${badgeTone}`}>{badge}</span>}
+      </div>
       <div className={`mt-1 font-mono text-lg font-bold ${accent ?? 'text-fcText-primary'}`}>
         {value}
       </div>
+      {hint && <p className="mt-1 text-[11px] leading-snug text-fcText-secondary">{hint}</p>}
     </div>
   );
 }

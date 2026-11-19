@@ -68,3 +68,80 @@ export async function triggerMonitorRun(dayRange = 1): Promise<{ status: string 
   }
   return res.json() as Promise<{ status: string } & MonitorStatus>;
 }
+
+function csvCell(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || (typeof value === 'number' && Number.isNaN(value))) {
+    return '';
+  }
+  const str = String(value);
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+export function buildMonitorCsv(items: MonitorMetricItem[]): string {
+  const headers = [
+    'target_date',
+    'issued_date',
+    'n_cells',
+    'n_positives',
+    'expected_positives',
+    'hits_count',
+    'misses_count',
+    'capture_rate_pct',
+    'false_alarms_count',
+    'roc_auc',
+    'pr_auc',
+    'calibration_ratio',
+    'brier_score',
+    'extremo_cells',
+    'extremo_pos',
+    'alto_cells',
+    'alto_pos',
+    'moderado_cells',
+    'moderado_pos',
+    'bajo_cells',
+    'bajo_pos',
+    'evaluated_at',
+  ];
+
+  const rows = items.map((item) => {
+    const expectedPositives = (item.mean_predicted_prob * item.n_cells).toFixed(2);
+    const captureRatePct =
+      item.n_positives > 0 ? ((item.hits_count / item.n_positives) * 100).toFixed(2) : '';
+    const ext = item.categories?.Extremo;
+    const alt = item.categories?.Alto;
+    const mod = item.categories?.Moderado;
+    const baj = item.categories?.Bajo;
+
+    return [
+      item.target_date,
+      item.issued_date,
+      item.n_cells,
+      item.n_positives,
+      expectedPositives,
+      item.hits_count,
+      item.misses_count,
+      captureRatePct,
+      item.false_alarms_count,
+      item.roc_auc !== null ? item.roc_auc.toFixed(6) : '',
+      item.pr_auc !== null ? item.pr_auc.toFixed(6) : '',
+      item.calibration_ratio !== null ? item.calibration_ratio.toFixed(4) : '',
+      item.brier_score.toFixed(6),
+      ext?.cells_count ?? 0,
+      ext?.positives_count ?? 0,
+      alt?.cells_count ?? 0,
+      alt?.positives_count ?? 0,
+      mod?.cells_count ?? 0,
+      mod?.positives_count ?? 0,
+      baj?.cells_count ?? 0,
+      baj?.positives_count ?? 0,
+      item.evaluated_at,
+    ]
+      .map(csvCell)
+      .join(',');
+  });
+
+  return [headers.join(','), ...rows].join('\n');
+}

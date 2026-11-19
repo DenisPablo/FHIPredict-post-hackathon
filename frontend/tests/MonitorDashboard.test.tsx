@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { MonitorDashboard } from '../src/components/MonitorDashboard';
-import type { MonitorMetricItem } from '../src/api/monitor';
+import { buildMonitorCsv, type MonitorMetricItem } from '../src/api/monitor';
 
 const SAMPLE_ITEM: MonitorMetricItem = {
   target_date: '2026-11-18',
@@ -29,8 +29,18 @@ const SAMPLE_ITEM: MonitorMetricItem = {
   evaluated_at: '2026-11-18T15:00:00+00:00',
 };
 
+describe('buildMonitorCsv', () => {
+  it('formats headers and metric rows cleanly', () => {
+    const csv = buildMonitorCsv([SAMPLE_ITEM]);
+    const lines = csv.split('\n');
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('target_date,issued_date,n_cells,n_positives,expected_positives');
+    expect(lines[1]).toContain('2026-11-18,2026-11-18,64653,12,12.93,8,4,66.67,120');
+  });
+});
+
 describe('MonitorDashboard', () => {
-  it('renders separate dashboard metrics and category breakdown', async () => {
+  it('renders plain-language summary, SVG charts, KPI explanations, and enabled CSV button', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes('/api/v1/monitor/metrics')) {
@@ -52,9 +62,17 @@ describe('MonitorDashboard', () => {
     await waitFor(() => {
       expect(screen.getAllByText('0.145').length).toBeGreaterThanOrEqual(1);
     });
+
     expect(screen.getByText('8 / 4')).toBeInTheDocument();
     expect(screen.getByText('120')).toBeInTheDocument();
+    expect(screen.getByText(/Resumen en lenguaje simple/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/66\.7%/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/Desglose por categoría/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Gráfico de captura por nivel de riesgo/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Gráfico de evolución diaria/i)).toBeInTheDocument();
+
+    const csvButton = screen.getByRole('button', { name: /Descargar CSV/i });
+    expect(csvButton).toBeEnabled();
 
     fetchSpy.mockRestore();
   });
