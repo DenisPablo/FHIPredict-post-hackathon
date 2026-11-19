@@ -106,8 +106,8 @@ export function MonitorDashboard({ lang, onToggleLang, onBackToMap }: MonitorDas
   const calInfo = activeItem ? calibBadge(activeItem.calibration_ratio, isEs) : null;
 
   return (
-    <div className="min-h-screen bg-space-base text-fcText-primary">
-      <header className="border-b border-space-border bg-space-surface/90 px-6 py-4 backdrop-blur-md">
+    <div className="h-screen w-full overflow-y-auto bg-space-base text-fcText-primary">
+      <header className="sticky top-0 z-20 border-b border-space-border bg-space-surface/95 px-6 py-4 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <button
@@ -193,7 +193,7 @@ export function MonitorDashboard({ lang, onToggleLang, onBackToMap }: MonitorDas
           <>
             <PlainLanguageSummary item={activeItem} isEs={isEs} />
 
-            <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <MetricCard
                 label="ROC-AUC"
                 value={fmt(activeItem.roc_auc)}
@@ -432,52 +432,69 @@ function PlainLanguageSummary({ item, isEs }: { item: MonitorMetricItem; isEs: b
 }
 
 function CategoryCaptureChart({ item, isEs }: { item: MonitorMetricItem; isEs: boolean }) {
-  const maxWidth = 220;
-
   return (
-    <div className="rounded-2xl border border-space-border bg-space-surface p-4">
+    <div className="rounded-2xl border border-space-border bg-space-surface p-5">
       <div className="flex items-center justify-between gap-2">
         <h2 className="font-title text-sm font-bold">
           {isEs ? 'Captura de incendios por nivel de riesgo' : 'Fire capture by risk level'}
         </h2>
-        <span className="font-mono text-[11px] text-fcText-secondary">{item.target_date}</span>
+        <span className="rounded-md border border-space-border bg-space-elevated px-2 py-0.5 font-mono text-[11px] text-fcText-secondary">
+          {item.target_date}
+        </span>
       </div>
-      <p className="mt-1 text-xs text-fcText-secondary">
+      <p className="mt-1 text-xs leading-relaxed text-fcText-secondary">
         {isEs
           ? 'Porcentaje de focos reales detectados dentro de cada categoría y cuántas veces supera al azar (Lift).'
           : 'Share of real fires falling inside each risk category and improvement over random (Lift).'}
       </p>
 
-      <svg
+      <div
         role="img"
         aria-label={isEs ? 'Gráfico de captura por nivel de riesgo' : 'Risk level capture chart'}
-        viewBox="0 0 460 156"
-        className="mt-3 w-full"
+        className="mt-4 space-y-3"
       >
-        {CATEGORIES.map((cat, idx) => {
+        {CATEGORIES.map((cat) => {
           const row = item.categories?.[cat];
           const recall = row?.recall ?? 0;
-          const barW = Math.max(2, recall * maxWidth);
-          const y = 14 + idx * 35;
+          const pct = Math.max(0, Math.min(100, recall * 100));
           const liftText =
             row?.lift !== null && row?.lift !== undefined ? `${row.lift.toFixed(1)}x` : '—';
           return (
-            <g key={cat} transform={`translate(0, ${y})`}>
-              <text x="0" y="15" fill="#E2E8F0" fontSize="11" fontFamily="monospace" fontWeight="600">
-                {cat}
-              </text>
-              <rect x="78" y="4" width={maxWidth} height="14" rx="4" fill="#1E293B" />
-              <rect x="78" y="4" width={barW} height="14" rx="4" fill={CAT_COLOR[cat]} />
-              <text x="308" y="15" fill="#E2E8F0" fontSize="11" fontFamily="monospace">
-                {(recall * 100).toFixed(0)}% ({row?.positives_count ?? 0})
-              </text>
-              <text x="382" y="15" fill="#94A3B8" fontSize="10" fontFamily="monospace">
-                {isEs ? `Lift ${liftText}` : `Lift ${liftText}`}
-              </text>
-            </g>
+            <div key={cat} className="space-y-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: CAT_COLOR[cat] }}
+                  />
+                  <span className="font-semibold text-fcText-primary">{cat}</span>
+                  <span className="text-[11px] text-fcText-secondary">
+                    ({(row?.cells_count ?? 0).toLocaleString(isEs ? 'es-AR' : 'en-US')}{' '}
+                    {isEs ? 'celdas' : 'cells'})
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-fcText-primary">
+                    {pct.toFixed(0)}% ({row?.positives_count ?? 0} {isEs ? 'focos' : 'fires'})
+                  </span>
+                  <span className="rounded-md border border-space-border bg-space-elevated px-1.5 py-0.5 text-[10px] text-fcText-secondary">
+                    Lift {liftText}
+                  </span>
+                </div>
+              </div>
+              <div className="h-2.5 w-full overflow-hidden rounded-full bg-space-elevated">
+                <div
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{
+                    width: `${pct > 0 ? Math.max(3, pct) : 0}%`,
+                    backgroundColor: CAT_COLOR[cat],
+                  }}
+                />
+              </div>
+            </div>
           );
         })}
-      </svg>
+      </div>
     </div>
   );
 }
@@ -494,28 +511,10 @@ function DailyHistoryChart({
   isEs: boolean;
 }) {
   const chronological = items.slice(0, 14).reverse();
-  const chartW = 460;
-  const chartH = 156;
-  const padLeft = 30;
-  const padBottom = 26;
-  const plotW = chartW - padLeft - 16;
-  const plotH = chartH - padBottom - 16;
   const maxPos = Math.max(1, ...chronological.map((d) => d.n_positives));
-  const stepX = plotW / Math.max(1, chronological.length);
-  const barW = Math.min(28, Math.max(10, stepX * 0.55));
-
-  const rocPoints = chronological
-    .map((d, idx) => {
-      if (d.roc_auc === null) return null;
-      const x = padLeft + idx * stepX + stepX / 2;
-      const y = 12 + (1 - Math.min(1, Math.max(0, d.roc_auc))) * plotH;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .filter((p): p is string => p !== null)
-    .join(' ');
 
   return (
-    <div className="rounded-2xl border border-space-border bg-space-surface p-4">
+    <div className="rounded-2xl border border-space-border bg-space-surface p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-title text-sm font-bold">
           {isEs ? 'Evolución diaria: Aciertos vs. Omitidos' : 'Daily trend: Hits vs. Misses'}
@@ -532,82 +531,62 @@ function DailyHistoryChart({
           </span>
         </div>
       </div>
-      <p className="mt-1 text-xs text-fcText-secondary">
+      <p className="mt-1 text-xs leading-relaxed text-fcText-secondary">
         {isEs
-          ? 'Hacé clic en un día para ver su detalle. La línea celeste muestra la capacidad de ordenamiento (ROC-AUC).'
-          : 'Click any day to inspect details. The cyan line tracks ranking accuracy (ROC-AUC).'}
+          ? 'Hacé clic en un día para ver su detalle. Cada barra compara aciertos vs. omitidos y muestra su ROC-AUC.'
+          : 'Click any day to inspect details. Each bar compares hits vs. misses and shows its ROC-AUC.'}
       </p>
 
-      <svg
+      <div
         role="img"
         aria-label={isEs ? 'Gráfico de evolución diaria' : 'Daily evolution chart'}
-        viewBox={`0 0 ${chartW} ${chartH}`}
-        className="mt-3 w-full"
+        className="mt-4 flex items-end gap-2 overflow-x-auto pb-1"
       >
-        <line x1={padLeft} y1={12 + plotH} x2={chartW - 10} y2={12 + plotH} stroke="#334155" strokeWidth="1" />
-        <text x="2" y="18" fill="#94A3B8" fontSize="9" fontFamily="monospace">
-          {maxPos}
-        </text>
-        <text x="8" y={12 + plotH} fill="#94A3B8" fontSize="9" fontFamily="monospace">
-          0
-        </text>
-
-        {chronological.map((d, idx) => {
-          const xCenter = padLeft + idx * stepX + stepX / 2;
-          const x = xCenter - barW / 2;
-          const hitH = (d.hits_count / maxPos) * plotH;
-          const missH = (d.misses_count / maxPos) * plotH;
-          const yHit = 12 + plotH - hitH;
-          const yMiss = yHit - missH;
+        {chronological.map((d) => {
           const isSel = d.target_date === selectedDate;
+          const hitPct = (d.hits_count / maxPos) * 100;
+          const missPct = (d.misses_count / maxPos) * 100;
           return (
-            <g
+            <button
               key={d.target_date}
+              type="button"
               onClick={() => onSelectDate(d.target_date)}
-              className="cursor-pointer"
+              className={`flex min-w-[68px] flex-1 flex-col items-center rounded-xl border p-2.5 transition ${
+                isSel
+                  ? 'border-lime-brand/50 bg-space-elevated/90'
+                  : 'border-space-border/60 bg-space-elevated/35 hover:border-space-borderLight'
+              }`}
             >
-              {isSel && (
-                <rect
-                  x={x - 3}
-                  y={10}
-                  width={barW + 6}
-                  height={plotH + 4}
-                  rx="4"
-                  fill="#1E293B"
-                  opacity="0.7"
-                />
-              )}
-              {missH > 0 && (
-                <rect x={x} y={yMiss} width={barW} height={missH} rx="2" fill="#FF6759" />
-              )}
-              {hitH > 0 && (
-                <rect x={x} y={yHit} width={barW} height={hitH} rx="2" fill="#B3E54E" />
-              )}
-              <text
-                x={xCenter}
-                y={chartH - 7}
-                textAnchor="middle"
-                fill={isSel ? '#E2E8F0' : '#94A3B8'}
-                fontSize="9"
-                fontFamily="monospace"
-                fontWeight={isSel ? '700' : '400'}
-              >
+              <span className="font-mono text-[10px] text-fcText-secondary">
+                <span className="text-lime-brand">{d.hits_count}</span> /{' '}
+                <span className="text-[#FF6759]">{d.misses_count}</span>
+              </span>
+
+              <div className="mt-2 flex h-24 w-7 flex-col justify-end overflow-hidden rounded-md bg-space-base/80">
+                {missPct > 0 && (
+                  <div
+                    className="w-full bg-[#FF6759]"
+                    style={{ height: `${Math.max(4, missPct)}%` }}
+                  />
+                )}
+                {hitPct > 0 && (
+                  <div
+                    className="w-full bg-lime-brand"
+                    style={{ height: `${Math.max(4, hitPct)}%` }}
+                  />
+                )}
+              </div>
+
+              <span className="mt-2 font-mono text-[11px] font-semibold text-fcText-primary">
                 {d.target_date.slice(5)}
-              </text>
-            </g>
+              </span>
+              <span className="mt-1 rounded bg-space-base px-1.5 py-0.5 font-mono text-[10px] text-[#68D9D0]">
+                {d.roc_auc !== null ? d.roc_auc.toFixed(3) : '—'}
+              </span>
+            </button>
           );
         })}
-
-        {rocPoints.includes(' ') && (
-          <polyline fill="none" stroke="#68D9D0" strokeWidth="2" points={rocPoints} />
-        )}
-        {chronological.map((d, idx) => {
-          if (d.roc_auc === null) return null;
-          const x = padLeft + idx * stepX + stepX / 2;
-          const y = 12 + (1 - Math.min(1, Math.max(0, d.roc_auc))) * plotH;
-          return <circle key={`pt-${d.target_date}`} cx={x} cy={y} r="3.2" fill="#68D9D0" />;
-        })}
-      </svg>
+      </div>
     </div>
   );
 }
@@ -628,15 +607,21 @@ function MetricCard({
   hint?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-space-border bg-space-surface p-3.5">
-      <div className="flex items-center justify-between gap-1">
-        <span className="font-mono text-[11px] text-fcText-secondary">{label}</span>
-        {badge && <span className={`font-mono text-[10px] font-semibold ${badgeTone}`}>{badge}</span>}
+    <div className="rounded-2xl border border-space-border bg-space-surface p-4">
+      <div className="font-mono text-[11px] text-fcText-secondary">{label}</div>
+      <div className="mt-1.5 flex flex-wrap items-baseline justify-between gap-2">
+        <div className={`font-mono text-2xl font-bold tracking-tight ${accent ?? 'text-fcText-primary'}`}>
+          {value}
+        </div>
+        {badge && (
+          <span
+            className={`rounded-full border border-space-border bg-space-elevated px-2 py-0.5 font-mono text-[10px] font-semibold ${badgeTone}`}
+          >
+            {badge}
+          </span>
+        )}
       </div>
-      <div className={`mt-1 font-mono text-lg font-bold ${accent ?? 'text-fcText-primary'}`}>
-        {value}
-      </div>
-      {hint && <p className="mt-1 text-[11px] leading-snug text-fcText-secondary">{hint}</p>}
+      {hint && <p className="mt-2 text-xs leading-snug text-fcText-secondary">{hint}</p>}
     </div>
   );
 }
