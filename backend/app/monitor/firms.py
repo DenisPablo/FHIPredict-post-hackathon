@@ -7,6 +7,7 @@ import csv
 from dataclasses import dataclass
 import io
 from pathlib import Path
+from typing import Any
 import duckdb
 import httpx
 import numpy as np
@@ -292,5 +293,85 @@ class ViirsStore:
                 """,
                 [acq_date],
             ).fetchnumpy()
+        finally:
+            con.close()
+
+    def load_rolling_fire_memory(self, ref_date: str) -> dict[str, Any]:
+        """Aggregate 1d, 2d, 7d, and 30d rolling fire memory up to `ref_date` from DuckDB."""
+        empty = {
+            "covered_days_1d": 0,
+            "covered_days_2d": 0,
+            "covered_days_7d": 0,
+            "covered_days_30d": 0,
+            "cell_id": np.empty(0, dtype=np.int32),
+            "focos_1d": np.empty(0, dtype=np.float32),
+            "focos_2d": np.empty(0, dtype=np.float32),
+            "frp_1d": np.empty(0, dtype=np.float32),
+            "focos_7d": np.empty(0, dtype=np.float32),
+            "focos_30d": np.empty(0, dtype=np.float32),
+            "frp_7d": np.empty(0, dtype=np.float32),
+            "days_since_pos": np.empty(0, dtype=np.float32),
+        }
+        if not self.db_path.exists():
+            return empty
+
+        con = self._connect()
+        try:
+            cov = con.execute(
+                """
+                SELECT
+                    COUNT(DISTINCT CASE WHEN acq_date = CAST(? AS DATE) THEN acq_date END),
+                    COUNT(DISTINCT CASE WHEN acq_date >= CAST(? AS DATE) - INTERVAL 1 DAY THEN acq_date END),
+                    COUNT(DISTINCT CASE WHEN acq_date >= CAST(? AS DATE) - INTERVAL 6 DAY THEN acq_date END),
+                    COUNT(DISTINCT acq_date)
+                FROM viirs_cell_daily
+                WHERE acq_date BETWEEN CAST(? AS DATE) - INTERVAL 29 DAY AND CAST(? AS DATE)
+                """,
+                [ref_date, ref_date, ref_date, ref_date, ref_date],
+            ).fetchone()
+            if cov is None or int(cov[3] or 0) == 0:
+                return empty
+
+            rows = con.execute(
+                """
+                WITH daily_cell AS (
+                    SELECT
+                        acq_date,
+                        cell_id,
+                        CAST(SUM(detections_count) AS FLOAT) AS det,
+                        CAST(SUM(frp_sum) AS FLOAT) AS frp
+                    FROM viirs_cell_daily
+                    WHERE acq_date BETWEEN CAST(? AS DATE) - INTERVAL 29 DAY AND CAST(? AS DATE)
+                    GROUP BY acq_date, cell_id
+                )
+                SELECT
+                    cell_id,
+                    CAST(COALESCE(SUM(CASE WHEN acq_date = CAST(? AS DATE) THEN det ELSE 0 END), 0) AS FLOAT) AS focos_1d,
+                    CAST(COALESCE(SUM(CASE WHEN acq_date >= CAST(? AS DATE) - INTERVAL 1 DAY THEN det ELSE 0 END), 0) AS FLOAT) AS focos_2d,
+                    CAST(COALESCE(SUM(CASE WHEN acq_date = CAST(? AS DATE) THEN frp ELSE 0 END), 0) AS FLOAT) AS frp_1d,
+                    CAST(COALESCE(SUM(CASE WHEN acq_date >= CAST(? AS DATE) - INTERVAL 6 DAY THEN det ELSE 0 END), 0) AS FLOAT) AS focos_7d,
+                    CAST(COALESCE(SUM(det), 0) AS FLOAT) AS focos_30d,
+                    CAST(COALESCE(SUM(CASE WHEN acq_date >= CAST(? AS DATE) - INTERVAL 6 DAY THEN frp ELSE 0 END), 0) AS FLOAT) AS frp_7d,
+                    CAST(COALESCE(
+                        DATEDIFF(
+                            'day',
+                            MAX(CASE WHEN det >= 1.0 AND frp >= 10.0 THEN acq_date END),
+                            CAST(? AS DATE) + INTERVAL 1 DAY
+                        ),
+                        -1
+                    ) AS FLOAT) AS days_since_pos
+                FROM daily_cell
+                GROUP BY cell_id
+                ORDER BY cell_id
+                """,
+                [ref_date, ref_date, ref_date, ref_date, ref_date, ref_date, ref_date, ref_date],
+            ).fetchnumpy()
+            return {
+                "covered_days_1d": int(cov[0] or 0),
+                "covered_days_2d": int(cov[1] or 0),
+                "covered_days_7d": int(cov[2] or 0),
+                "covered_days_30d": int(cov[3] or 0),
+                **rows,
+            }
         finally:
             con.close()

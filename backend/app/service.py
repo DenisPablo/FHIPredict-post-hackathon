@@ -12,6 +12,7 @@ import duckdb
 import joblib
 import numpy as np
 from .config import Settings
+from .monitor.firms import ViirsStore
 from .monitor.snapshots import SnapshotStore
 from .openmeteo import WeatherGridForecast, fetch_openmeteo_grid
 from .predictor import FireRiskPredictor
@@ -64,6 +65,19 @@ class CachedForecast:
     stability: np.ndarray  # (N, D) float16
     weather: WeatherGridForecast
     is_stale: bool = False
+
+
+@dataclass
+class FireMemoryState:
+    """Dynamic per-cell fire memory resolved from live VIIRS + baseline."""
+
+    focos_1d: np.ndarray
+    focos_2d: np.ndarray
+    frp_1d: np.ndarray
+    focos_7d: np.ndarray
+    focos_30d: np.ndarray
+    frp_7d: np.ndarray
+    anios_desde_ultimo_fuego: np.ndarray
 
 
 def load_baseline(parquet_path: str) -> CellBaseline:
@@ -137,6 +151,11 @@ class ForecastService:
             if settings.enable_monitor_snapshots
             else None
         )
+        self._viirs_store = ViirsStore(
+            db_path=settings.monitor_dir / "monitor.duckdb",
+            memory_limit=settings.monitor_duckdb_memory_limit,
+        )
+        self._cell_idx_map: dict[int, int] | None = None
         self._lock = asyncio.Lock()
         self._refresh_task: asyncio.Task[None] | None = None
 
@@ -299,6 +318,103 @@ class ForecastService:
             logger.warning("Failed to persist 24h monitor snapshot: %s", exc)
             return False
 
+    def _get_cell_idx_map(self) -> dict[int, int]:
+        if self._cell_idx_map is None:
+            self._cell_idx_map = {
+                int(cid): idx for idx, cid in enumerate(self.baseline.cell_id.tolist())
+            }
+        return self._cell_idx_map
+
+    def _resolve_fire_memory(self, ref_date: str) -> FireMemoryState:
+        """Blend static baseline fire memory with live VIIRS detections up to `ref_date`."""
+        b = self.baseline
+        f1 = (
+            b.focos_ultimos_1d.copy()
+            if b.focos_ultimos_1d is not None
+            else (b.focos_ultimos_7d / 7.0).astype(np.float32)
+        )
+        f2 = (
+            b.focos_ultimos_2d.copy()
+            if b.focos_ultimos_2d is not None
+            else (b.focos_ultimos_7d * (2.0 / 7.0)).astype(np.float32)
+        )
+        frp1 = (
+            b.frp_ultimos_1d.copy()
+            if b.frp_ultimos_1d is not None
+            else (b.frp_ultimos_7d / 7.0).astype(np.float32)
+        )
+        f7 = b.focos_ultimos_7d.copy()
+        f30 = b.focos_ultimos_30d.copy()
+        frp7 = b.frp_ultimos_7d.copy()
+        anios = b.anios_desde_ultimo_fuego.copy()
+
+        try:
+            viirs = self._viirs_store.load_rolling_fire_memory(ref_date)
+        except Exception as exc:
+            logger.warning("Failed to query live VIIRS fire memory (%s); using baseline", exc)
+            return FireMemoryState(f1, f2, frp1, f7, f30, frp7, anios)
+
+        cov30 = int(viirs.get("covered_days_30d", 0))
+        if cov30 == 0:
+            return FireMemoryState(f1, f2, frp1, f7, f30, frp7, anios)
+
+        w1 = min(1.0, float(viirs.get("covered_days_1d", 0)) / 1.0)
+        w2 = min(1.0, float(viirs.get("covered_days_2d", 0)) / 2.0)
+        w7 = min(1.0, float(viirs.get("covered_days_7d", 0)) / 7.0)
+        w30 = min(1.0, float(cov30) / 30.0)
+
+        f1 = (f1 * (1.0 - w1)).astype(np.float32)
+        f2 = (f2 * (1.0 - w2)).astype(np.float32)
+        frp1 = (frp1 * (1.0 - w1)).astype(np.float32)
+        f7 = (f7 * (1.0 - w7)).astype(np.float32)
+        f30 = (f30 * (1.0 - w30)).astype(np.float32)
+        frp7 = (frp7 * (1.0 - w7)).astype(np.float32)
+
+        idx_map = self._get_cell_idx_map()
+        for cid, v_f1, v_f2, v_frp1, v_f7, v_f30, v_frp7, v_days in zip(
+            viirs["cell_id"].tolist(),
+            viirs["focos_1d"].tolist(),
+            viirs["focos_2d"].tolist(),
+            viirs["frp_1d"].tolist(),
+            viirs["focos_7d"].tolist(),
+            viirs["focos_30d"].tolist(),
+            viirs["frp_7d"].tolist(),
+            viirs["days_since_pos"].tolist(),
+        ):
+            pos = idx_map.get(int(cid))
+            if pos is None:
+                continue
+            f1[pos] += float(v_f1)
+            f2[pos] += float(v_f2)
+            frp1[pos] += float(v_frp1)
+            f7[pos] += float(v_f7)
+            f30[pos] += float(v_f30)
+            frp7[pos] += float(v_frp7)
+            if float(v_days) > 0.0:
+                anios[pos] = min(float(anios[pos]), float(v_days) / 365.25)
+
+        return FireMemoryState(f1, f2, frp1, f7, f30, frp7, anios)
+
+    @staticmethod
+    def _decay_fire_memory_for_horizon(mem: FireMemoryState, day_idx: int) -> FireMemoryState:
+        """Advance rolling fire windows forward by `day_idx` forecast days."""
+        if day_idx <= 0:
+            return mem
+        d = float(day_idx)
+        a1 = 0.0
+        a2 = max(0.0, (2.0 - d) / 2.0)
+        a7 = max(0.0, (7.0 - d) / 7.0)
+        a30 = max(0.0, (30.0 - d) / 30.0)
+        return FireMemoryState(
+            focos_1d=(mem.focos_1d * a1).astype(np.float32),
+            focos_2d=(mem.focos_2d * a2).astype(np.float32),
+            frp_1d=(mem.frp_1d * a1).astype(np.float32),
+            focos_7d=(mem.focos_7d * a7).astype(np.float32),
+            focos_30d=(mem.focos_30d * a30).astype(np.float32),
+            frp_7d=(mem.frp_7d * a7).astype(np.float32),
+            anios_desde_ultimo_fuego=(mem.anios_desde_ultimo_fuego + (d / 365.25)).astype(np.float32),
+        )
+
     def _score_all_days(self, weather: WeatherGridForecast) -> tuple[np.ndarray, np.ndarray]:
         b = self.baseline
         n_cells = len(b.cell_id)
@@ -306,22 +422,25 @@ class ForecastService:
         probs = np.empty((n_cells, n_days), dtype=np.float32)
         stability = np.empty((n_cells, n_days), dtype=np.float16)
         g_idx = b.cell_to_grid
+        base_mem = self._resolve_fire_memory(weather.dates[0]) if n_days > 0 else None
 
         for d_idx, date_str in enumerate(weather.dates):
             dt = datetime.strptime(date_str, "%Y-%m-%d")
             mes_val = float(dt.month)
             doy_val = float(dt.timetuple().tm_yday)
+            assert base_mem is not None
+            mem_d = self._decay_fire_memory_for_horizon(base_mem, d_idx)
 
             X = np.column_stack([
                 b.lat_centro,
                 b.lon_centro,
                 np.full(n_cells, mes_val, dtype=np.float32),
                 np.full(n_cells, doy_val, dtype=np.float32),
-                b.focos_ultimos_7d,
-                b.focos_ultimos_30d,
-                b.frp_ultimos_7d,
+                mem_d.focos_7d,
+                mem_d.focos_30d,
+                mem_d.frp_7d,
                 b.clim_months[:, dt.month - 1],
-                b.anios_desde_ultimo_fuego,
+                mem_d.anios_desde_ultimo_fuego,
                 b.elevacion_m,
                 weather.temperature_2m_max[g_idx, d_idx],
                 weather.relative_humidity_2m[g_idx, d_idx],
@@ -387,10 +506,10 @@ class ForecastService:
         else:
             span = max(1, min(days, n_avail))
             sub = cached.probs[:, :span]
-            # Cumulative probability of >=1 fire event in [0..span-1]
-            prob = (1.0 - np.prod(1.0 - sub, axis=1)).astype(np.float32)
-            # Representative weather from the peak-risk day for each cell
+            # Peak daily probability in [0..span-1] (Fréchet bound under strong inter-day autocorrelation,
+            # preserving the 24h calibration scale of `self.predictor.risk_cutoffs`).
             w_idx_arr = np.argmax(sub, axis=1)
+            prob = np.max(sub, axis=1).astype(np.float32)
             w_idx = int(0)  # handled below if array
             fecha_desde = cached.dates[0]
             fecha_hasta = cached.dates[span - 1]
@@ -517,8 +636,13 @@ class ForecastService:
 
         p_risk = cached.probs[:, idx]
         is_ind = b.is_industrial if b.is_industrial is not None else np.zeros(n_cells, dtype=np.float32)
+        base_mem = self._resolve_fire_memory(cached.dates[0])
+        mem_d = self._decay_fire_memory_for_horizon(base_mem, idx)
+        has_observed_fire = mem_d.focos_7d >= 1.0
         # Active wildfire sources: non-industrial cells with recent fire memory OR extreme/high predicted risk today
-        active_source_mask = ((b.focos_ultimos_7d >= 1.0) | (p_risk >= self.predictor.risk_cutoffs["Alto"])) & (is_ind < 0.5)
+        active_source_mask = (has_observed_fire | (p_risk >= self.predictor.risk_cutoffs["Alto"])) & (is_ind < 0.5)
+        # Law of total probability: P(s active) = 1.0 if observed fire, else P(ignition_s) = p_risk[s]
+        source_active_prob = np.where(has_observed_fire, 1.0, p_risk).astype(np.float32)
         graph = self.get_neighbor_graph()
 
         edge_mask = active_source_mask[graph.src_idx]
@@ -533,18 +657,19 @@ class ForecastService:
             doy_val = float(dt.timetuple().tm_yday)
             n_edges = len(s_idx)
 
-            # Neighborhood summary per target cell
+            # Neighborhood summary per target cell (weighted by source activation probability)
             act_nbr_cnt = np.zeros(n_cells, dtype=np.float32)
             nbr_focos_sum = np.zeros(n_cells, dtype=np.float32)
             nbr_frp_sum = np.zeros(n_cells, dtype=np.float32)
-            f1_arr = b.focos_ultimos_1d if b.focos_ultimos_1d is not None else (b.focos_ultimos_7d / 7.0)
-            f2_arr = b.focos_ultimos_2d if b.focos_ultimos_2d is not None else (b.focos_ultimos_7d * (2.0 / 7.0))
-            frp1_arr = b.frp_ultimos_1d if b.frp_ultimos_1d is not None else (b.frp_ultimos_7d / 7.0)
+            f1_arr = mem_d.focos_1d
+            f2_arr = mem_d.focos_2d
+            frp1_arr = mem_d.frp_1d
+            s_weight = source_active_prob[s_idx]
             s_focos = np.maximum(f1_arr[s_idx], 1.0)
             s_frp = np.maximum(frp1_arr[s_idx], 10.0)
-            np.add.at(act_nbr_cnt, t_idx, 1.0)
-            np.add.at(nbr_focos_sum, t_idx, s_focos)
-            np.add.at(nbr_frp_sum, t_idx, s_frp)
+            np.add.at(act_nbr_cnt, t_idx, s_weight)
+            np.add.at(nbr_focos_sum, t_idx, s_focos * s_weight)
+            np.add.at(nbr_frp_sum, t_idx, s_frp * s_weight)
 
             g_t = b.cell_to_grid[t_idx]
             g_s = b.cell_to_grid[s_idx]
@@ -578,12 +703,12 @@ class ForecastService:
                 graph.slope_deg[edge_mask],
                 s_focos,
                 s_frp,
-                b.focos_ultimos_7d[s_idx],
-                b.focos_ultimos_7d[t_idx],
-                b.focos_ultimos_30d[t_idx],
-                b.frp_ultimos_7d[t_idx],
+                mem_d.focos_7d[s_idx],
+                mem_d.focos_7d[t_idx],
+                mem_d.focos_30d[t_idx],
+                mem_d.frp_7d[t_idx],
                 b.clim_months[t_idx, dt.month - 1],
-                b.anios_desde_ultimo_fuego[t_idx],
+                mem_d.anios_desde_ultimo_fuego[t_idx],
                 act_nbr_cnt[t_idx],
                 nbr_focos_sum[t_idx],
                 nbr_frp_sum[t_idx],
@@ -603,7 +728,7 @@ class ForecastService:
                 frac_dentro[t_idx],
                 is_ind[s_idx],
                 ind_share[s_idx],
-                b.focos_ultimos_30d[s_idx],
+                mem_d.focos_30d[s_idx],
                 f1_arr[t_idx],
                 f2_arr[t_idx],
                 frp1_arr[t_idx],
@@ -615,11 +740,12 @@ class ForecastService:
                 fuel_pastizal[s_idx],
             ])
 
-            pair_probs = self.spread_predictor.predict_pair_probabilities(
+            cond_pair_probs = self.spread_predictor.predict_pair_probabilities(
                 X_pairs,
                 wind_alignment=wind_align if w.wind_direction_10m_dominant is not None else None,
                 wind_speed_kmh=w.wind_speed_10m_max[g_s, idx],
             )
+            pair_probs = (cond_pair_probs * s_weight).astype(np.float32)
             p_spread = aggregate_target_probabilities(n_cells, t_idx, pair_probs)
 
         p_fused = fuse_risk_and_spread(p_risk, p_spread)

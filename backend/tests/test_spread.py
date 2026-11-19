@@ -103,3 +103,80 @@ def test_neighbor_graph_and_probability_aggregation():
     )
     assert np.isclose(fused[0], 0.55, atol=1e-5)
     assert np.isclose(fused[1], 0.40, atol=1e-5)
+
+
+def test_spread_weights_unconfirmed_high_risk_sources_by_ignition_probability(tmp_path: Path):
+    from app.config import Settings
+    from app.openmeteo import WeatherGridForecast
+    from app.service import CachedForecast, ForecastService
+
+    models_dir = Path(__file__).resolve().parents[1] / "models"
+    svc = ForecastService(Settings(models_dir=models_dir, monitor_dir=tmp_path / "mon"))
+    n_cells = len(svc.baseline.cell_id)
+    n_grid = len(svc.baseline.grid_coords)
+
+    # Pick an interior source cell that has neighbors and is non-industrial
+    graph = svc.get_neighbor_graph()
+    is_ind = svc.baseline.is_industrial if svc.baseline.is_industrial is not None else np.zeros(n_cells)
+    candidates = np.unique(graph.src_idx[is_ind[graph.src_idx] < 0.5])
+    src_cell_idx = int(candidates[0])
+    dst_cell_idx = int(graph.dst_idx[graph.src_idx == src_cell_idx][0])
+    dst_cid = int(svc.baseline.cell_id[dst_cell_idx])
+
+    zeros_gd = np.zeros((n_grid, 1), dtype=np.float32)
+    weather = WeatherGridForecast(
+        dates=["2026-11-18"],
+        temperature_2m_max=np.full((n_grid, 1), 32.0, dtype=np.float32),
+        relative_humidity_2m=np.full((n_grid, 1), 22.0, dtype=np.float32),
+        wind_speed_10m_max=np.full((n_grid, 1), 25.0, dtype=np.float32),
+        precipitation_sum=zeros_gd,
+        shortwave_radiation_sum=np.full((n_grid, 1), 22.0, dtype=np.float32),
+        lluvia_acum_7d=zeros_gd,
+        lluvia_acum_15d=zeros_gd,
+        lluvia_acum_30d=zeros_gd,
+        dias_consecutivos_sin_lluvia=np.full((n_grid, 1), 12.0, dtype=np.float32),
+        vpd_approx=np.full((n_grid, 1), 3.2, dtype=np.float32),
+        wind_direction_10m_dominant=zeros_gd,
+        wind_gusts_10m_max=np.full((n_grid, 1), 35.0, dtype=np.float32),
+    )
+
+    # Only src_cell_idx has Alto ignition risk (0.02); all observed fire memory is cleared
+    svc.baseline.focos_ultimos_7d[:] = 0.0
+    svc.baseline.focos_ultimos_30d[:] = 0.0
+    if svc.baseline.focos_ultimos_1d is not None:
+        svc.baseline.focos_ultimos_1d[:] = 0.0
+    if svc.baseline.frp_ultimos_1d is not None:
+        svc.baseline.frp_ultimos_1d[:] = 0.0
+
+    probs = np.full((n_cells, 1), 0.0005, dtype=np.float32)
+    probs[src_cell_idx, 0] = 0.02  # Alto risk, but no confirmed fire
+    cached = CachedForecast(
+        generated_at="2026-11-18T12:00:00+00:00",
+        expires_at=9999999.0,
+        dates=["2026-11-18"],
+        probs=probs,
+        stability=np.full((n_cells, 1), 0.9, dtype=np.float16),
+        weather=weather,
+    )
+
+    unconfirmed_geo = svc.query_spread_geojson(cached=cached, horizon_hours=24, min_risk="Bajo")
+    unconfirmed_map = {
+        f["properties"]["cell_id"]: f["properties"]["propagacion_pct"]
+        for f in unconfirmed_geo["features"]
+    }
+
+    # Now mark src_cell_idx as having an observed active fire
+    svc.baseline.focos_ultimos_7d[src_cell_idx] = 3.0
+    if svc.baseline.focos_ultimos_1d is not None:
+        svc.baseline.focos_ultimos_1d[src_cell_idx] = 3.0
+    if svc.baseline.frp_ultimos_1d is not None:
+        svc.baseline.frp_ultimos_1d[src_cell_idx] = 35.0
+
+    confirmed_geo = svc.query_spread_geojson(cached=cached, horizon_hours=24, min_risk="Bajo")
+    confirmed_map = {
+        f["properties"]["cell_id"]: f["properties"]["propagacion_pct"]
+        for f in confirmed_geo["features"]
+    }
+
+    assert dst_cid in confirmed_map
+    assert unconfirmed_map.get(dst_cid, 0.0) < confirmed_map[dst_cid] * 0.15
