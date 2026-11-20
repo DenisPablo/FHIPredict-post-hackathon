@@ -107,6 +107,10 @@ export interface SpreadResponse {
     fecha_desde: string;
     fecha_hasta: string;
     active_source_cells: number;
+    source_cutoff?: {
+      mode: 'daily_percentile' | 'static';
+      Alto: number;
+    };
     counts: Record<RiskCategory, number>;
     returned: number;
   };

@@ -180,3 +180,83 @@ def test_spread_weights_unconfirmed_high_risk_sources_by_ignition_probability(tm
 
     assert dst_cid in confirmed_map
     assert unconfirmed_map.get(dst_cid, 0.0) < confirmed_map[dst_cid] * 0.15
+
+
+def test_spread_source_selection_aligns_with_daily_percentile_cutoffs(tmp_path: Path):
+    from app.config import Settings
+    from app.openmeteo import WeatherGridForecast
+    from app.service import CachedForecast, ForecastService
+
+    models_dir = Path(__file__).resolve().parents[1] / "models"
+    svc = ForecastService(Settings(models_dir=models_dir, monitor_dir=tmp_path / "mon"))
+    n_cells = len(svc.baseline.cell_id)
+    n_grid = len(svc.baseline.grid_coords)
+
+    idx = np.linspace(0.0, 1.0, n_cells, dtype=np.float64)
+    day_probs = (1e-5 + 0.01 * (idx**30)).astype(np.float32)  # max 0.01001 < static Alto 0.01292
+    probs = day_probs[:, None]
+
+    # Clear all observed fire memory so only predicted risk can trigger sources
+    svc.baseline.focos_ultimos_7d[:] = 0.0
+    svc.baseline.focos_ultimos_30d[:] = 0.0
+    if svc.baseline.focos_ultimos_1d is not None:
+        svc.baseline.focos_ultimos_1d[:] = 0.0
+    if svc.baseline.frp_ultimos_1d is not None:
+        svc.baseline.frp_ultimos_1d[:] = 0.0
+
+    zeros_gd = np.zeros((n_grid, 1), dtype=np.float32)
+    weather = WeatherGridForecast(
+        dates=["2026-11-18"],
+        temperature_2m_max=np.full((n_grid, 1), 32.0, dtype=np.float32),
+        relative_humidity_2m=np.full((n_grid, 1), 22.0, dtype=np.float32),
+        wind_speed_10m_max=np.full((n_grid, 1), 25.0, dtype=np.float32),
+        precipitation_sum=zeros_gd,
+        shortwave_radiation_sum=np.full((n_grid, 1), 22.0, dtype=np.float32),
+        lluvia_acum_7d=zeros_gd,
+        lluvia_acum_15d=zeros_gd,
+        lluvia_acum_30d=zeros_gd,
+        dias_consecutivos_sin_lluvia=np.full((n_grid, 1), 12.0, dtype=np.float32),
+        vpd_approx=np.full((n_grid, 1), 3.2, dtype=np.float32),
+        wind_direction_10m_dominant=zeros_gd,
+        wind_gusts_10m_max=np.full((n_grid, 1), 35.0, dtype=np.float32),
+    )
+    cached = CachedForecast(
+        generated_at="2026-11-18T12:00:00+00:00",
+        expires_at=9999999.0,
+        dates=["2026-11-18"],
+        probs=probs,
+        stability=np.full((n_cells, 1), 0.9, dtype=np.float16),
+        weather=weather,
+    )
+
+    forecast_geo = svc.query_geojson(cached=cached, mode="day", day_offset=0, min_risk="Alto")
+    spread_geo = svc.query_spread_geojson(cached=cached, horizon_hours=24, day_offset=0, min_risk="Bajo")
+
+    assert spread_geo["meta"]["source_cutoff"]["mode"] == "daily_percentile"
+    assert spread_geo["meta"]["source_cutoff"]["Alto"] == forecast_geo["meta"]["cutoffs"]["Alto"]
+
+    is_ind = svc.baseline.is_industrial if svc.baseline.is_industrial is not None else np.zeros(n_cells, dtype=np.float32)
+    cutoffs, _ = svc._resolve_risk_cutoffs(day_probs)
+    expected_sources = int(np.sum((day_probs >= cutoffs["Alto"]) & (is_ind < 0.5)))
+    assert spread_geo["meta"]["active_source_cells"] == expected_sources
+    assert spread_geo["meta"]["active_source_cells"] > 0
+
+    # Static spread categorization + Law of Total Probability weighting prevent false high alerts
+    assert spread_geo["meta"]["counts"]["Extremo"] == 0
+    assert spread_geo["meta"]["counts"]["Alto"] == 0
+
+    svc_static = ForecastService(
+        Settings(models_dir=models_dir, monitor_dir=tmp_path / "mon_static", risk_cutoff_mode="static")
+    )
+    svc_static.baseline.focos_ultimos_7d[:] = 0.0
+    svc_static.baseline.focos_ultimos_30d[:] = 0.0
+    if svc_static.baseline.focos_ultimos_1d is not None:
+        svc_static.baseline.focos_ultimos_1d[:] = 0.0
+    if svc_static.baseline.frp_ultimos_1d is not None:
+        svc_static.baseline.frp_ultimos_1d[:] = 0.0
+
+    spread_static = svc_static.query_spread_geojson(cached=cached, horizon_hours=24, day_offset=0, min_risk="Bajo")
+    assert spread_static["meta"]["source_cutoff"]["mode"] == "static"
+    assert spread_static["meta"]["source_cutoff"]["Alto"] == round(float(svc_static.predictor.risk_cutoffs["Alto"]), 6)
+    assert spread_static["meta"]["active_source_cells"] == 0
+

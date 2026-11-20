@@ -663,8 +663,9 @@ class ForecastService:
         base_mem = self._resolve_fire_memory(cached.dates[0])
         mem_d = self._decay_fire_memory_for_horizon(base_mem, idx)
         has_observed_fire = mem_d.focos_7d >= 1.0
+        source_cutoffs, source_cutoff_mode = self._resolve_risk_cutoffs(p_risk)
         # Active wildfire sources: non-industrial cells with recent fire memory OR extreme/high predicted risk today
-        active_source_mask = (has_observed_fire | (p_risk >= self.predictor.risk_cutoffs["Alto"])) & (is_ind < 0.5)
+        active_source_mask = (has_observed_fire | (p_risk >= source_cutoffs["Alto"])) & (is_ind < 0.5)
         # Law of total probability: P(s active) = 1.0 if observed fire, else P(ignition_s) = p_risk[s]
         source_active_prob = np.where(has_observed_fire, 1.0, p_risk).astype(np.float32)
         graph = self.get_neighbor_graph()
@@ -834,6 +835,10 @@ class ForecastService:
                 "fecha_desde": cached.dates[idx],
                 "fecha_hasta": cached.dates[end_idx],
                 "active_source_cells": int(np.sum(active_source_mask)),
+                "source_cutoff": {
+                    "mode": source_cutoff_mode,
+                    "Alto": round(float(source_cutoffs["Alto"]), 6),
+                },
                 "counts": counts,
                 "returned": len(features),
             },
