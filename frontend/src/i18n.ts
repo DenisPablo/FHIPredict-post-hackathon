@@ -29,6 +29,7 @@ export const COPY = {
     spreadBtn: 'Propagación',
     spreadSources: 'focos activos',
     legendTitle: 'Índice de riesgo (prob. 24h)',
+    legendDailyPercentileNote: 'Umbral por percentil diario (top 5% / 1% / 0.1%)',
     demoBadge: 'Demo experimental',
     disclaimer:
       'Versión demo experimental. No representa verdad absoluta ni debe usarse en producción o para decisiones operativas/de emergencia. Es un índice probabilístico sobre celdas con historial ígneo (precisión ~16.5% en Extremo) sujeto a incertidumbre del pronóstico.',
@@ -102,6 +103,7 @@ export const COPY = {
     spreadBtn: 'Spread',
     spreadSources: 'active sources',
     legendTitle: 'Fire risk index (24h prob.)',
+    legendDailyPercentileNote: 'Daily percentile cutoffs (top 5% / 1% / 0.1%)',
     demoBadge: 'Experimental demo',
     disclaimer:
       'Experimental demo only. Not ground truth and not intended for production, operational, or emergency decisions. Probabilistic index over cells with fire history (~16.5% precision in Extreme), subject to weather forecast uncertainty.',

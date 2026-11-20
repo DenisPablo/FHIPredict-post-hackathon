@@ -188,3 +188,131 @@ def test_fire_memory_updates_from_viirs_and_decays_over_horizon(tmp_path: Path):
         rtol=1e-4,
     )
     assert float(decayed_d7.anios_desde_ultimo_fuego[0]) > float(mem.anios_desde_ultimo_fuego[0])
+
+
+def test_daily_percentile_cutoffs_adapt_underestimated_distribution():
+    models_dir = Path(__file__).resolve().parents[1] / "models"
+    predictor = FireRiskPredictor.from_bundle(models_dir / "fire_risk_bundle.joblib")
+
+    probs = np.concatenate(
+        [
+            np.linspace(1e-5, 0.0004, 9500),
+            np.linspace(0.00041, 0.0015, 400),
+            np.linspace(0.00151, 0.005, 90),
+            np.linspace(0.0051, 0.02, 10),
+        ]
+    ).astype(np.float32)
+
+    cutoffs = predictor.compute_daily_percentile_cutoffs(probs)
+    assert cutoffs["Extremo"] < predictor.risk_cutoffs["Extremo"]
+    assert cutoffs["Alto"] < predictor.risk_cutoffs["Alto"]
+    assert cutoffs["Moderado"] < predictor.risk_cutoffs["Moderado"]
+    assert cutoffs["Extremo"] >= cutoffs["Alto"] >= cutoffs["Moderado"]
+
+    cats = predictor.categorize(probs, cutoffs=cutoffs)
+    n = len(probs)
+    ext_share = float(np.sum(cats == "Extremo")) / n
+    high_share = float(np.sum(np.isin(cats, ["Extremo", "Alto"]))) / n
+    mod_share = float(np.sum(np.isin(cats, ["Extremo", "Alto", "Moderado"]))) / n
+
+    assert 0.0005 <= ext_share <= 0.0015
+    assert 0.009 <= high_share <= 0.011
+    assert 0.048 <= mod_share <= 0.052
+
+
+def test_daily_percentile_cutoffs_guards():
+    models_dir = Path(__file__).resolve().parents[1] / "models"
+    predictor = FireRiskPredictor.from_bundle(models_dir / "fire_risk_bundle.joblib")
+
+    # Severe outbreak: quantiles exceed static cutoffs -> capped at static bundle cutoffs
+    outbreak = np.linspace(0.001, 0.20, 10_000, dtype=np.float32)
+    outbreak_cutoffs = predictor.compute_daily_percentile_cutoffs(outbreak)
+    assert outbreak_cutoffs == predictor.risk_cutoffs
+
+    # Near-zero rainy day: quantiles fall below safety floors -> clamped at floors, zero alerts
+    rainy = np.linspace(1e-7, 5e-5, 10_000, dtype=np.float32)
+    rainy_cutoffs = predictor.compute_daily_percentile_cutoffs(rainy)
+    assert rainy_cutoffs == {"Extremo": 0.001, "Alto": 0.0003, "Moderado": 0.0001}
+    assert np.all(predictor.categorize(rainy, cutoffs=rainy_cutoffs) == "Bajo")
+
+    # Constant or too-small arrays -> fall back to static cutoffs
+    assert predictor.compute_daily_percentile_cutoffs(np.full(10_000, 0.0045, dtype=np.float32)) == predictor.risk_cutoffs
+    assert predictor.compute_daily_percentile_cutoffs(np.linspace(1e-4, 0.02, 10, dtype=np.float32)) == predictor.risk_cutoffs
+
+    # Tied-minimum array (q95 == vmin) -> fall back to static cutoffs
+    tied = np.concatenate(
+        [np.full(9_990, 0.0005, dtype=np.float32), np.full(10, 0.02, dtype=np.float32)]
+    )
+    tied_cutoffs = predictor.compute_daily_percentile_cutoffs(tied)
+    assert tied_cutoffs == predictor.risk_cutoffs
+    assert int(np.sum(predictor.categorize(tied, cutoffs=tied_cutoffs) == "Bajo")) == 9_990
+
+
+def test_query_geojson_and_snapshot_use_daily_percentile_cutoffs(tmp_path: Path):
+    from app.openmeteo import WeatherGridForecast
+    from app.service import CachedForecast, ForecastService
+
+    models_dir = Path(__file__).resolve().parents[1] / "models"
+    svc = ForecastService(
+        Settings(models_dir=models_dir, monitor_dir=tmp_path / "mon", enable_spread=False)
+    )
+    n_cells = len(svc.baseline.cell_id)
+    n_grid = len(svc.baseline.grid_coords)
+    n_days = 3
+    dates = ["2026-11-18", "2026-11-19", "2026-11-20"]
+
+    idx = np.linspace(0.0, 1.0, n_cells, dtype=np.float64)
+    day_probs = (1e-5 + 0.01 * (idx**30)).astype(np.float32)
+    probs = np.repeat(day_probs[:, None], n_days, axis=1)
+    stability = np.full((n_cells, n_days), 0.9, dtype=np.float16)
+    zeros_gd = np.zeros((n_grid, n_days), dtype=np.float32)
+    weather = WeatherGridForecast(
+        dates=dates,
+        temperature_2m_max=zeros_gd,
+        relative_humidity_2m=zeros_gd,
+        wind_speed_10m_max=zeros_gd,
+        precipitation_sum=zeros_gd,
+        shortwave_radiation_sum=zeros_gd,
+        lluvia_acum_7d=zeros_gd,
+        lluvia_acum_15d=zeros_gd,
+        lluvia_acum_30d=zeros_gd,
+        dias_consecutivos_sin_lluvia=zeros_gd,
+        vpd_approx=zeros_gd,
+    )
+    cached = CachedForecast(
+        generated_at="2026-11-18T12:00:00+00:00",
+        expires_at=9999999.0,
+        dates=dates,
+        probs=probs,
+        stability=stability,
+        weather=weather,
+    )
+
+    geo = svc.query_geojson(cached=cached, mode="day", day_offset=0, min_risk="Moderado")
+    assert geo["meta"]["cutoffs"]["mode"] == "daily_percentile"
+    assert 60 <= geo["meta"]["counts"]["Extremo"] <= 70
+    assert 570 <= geo["meta"]["counts"]["Alto"] <= 595
+    assert 2570 <= geo["meta"]["counts"]["Moderado"] <= 2600
+
+    assert svc._maybe_save_snapshot_24h(cached) is True
+    assert svc._snapshot_store is not None
+    snap = svc._snapshot_store.load_snapshot_24h("2026-11-18")
+    snap_counts = {
+        cat: int(np.sum(snap["risk_category"] == cat))
+        for cat in ("Bajo", "Moderado", "Alto", "Extremo")
+    }
+    assert snap_counts == geo["meta"]["counts"]
+
+    svc_static = ForecastService(
+        Settings(
+            models_dir=models_dir,
+            monitor_dir=tmp_path / "mon_static",
+            enable_spread=False,
+            risk_cutoff_mode="static",
+        )
+    )
+    geo_static = svc_static.query_geojson(cached=cached, mode="day", day_offset=0, min_risk="Moderado")
+    assert geo_static["meta"]["cutoffs"]["mode"] == "static"
+    assert geo_static["meta"]["cutoffs"]["Extremo"] == round(float(svc_static.predictor.risk_cutoffs["Extremo"]), 6)
+    assert geo_static["meta"]["cutoffs"]["Alto"] == round(float(svc_static.predictor.risk_cutoffs["Alto"]), 6)
+    assert geo_static["meta"]["cutoffs"]["Moderado"] == round(float(svc_static.predictor.risk_cutoffs["Moderado"]), 6)

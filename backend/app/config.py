@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -32,6 +33,13 @@ class Settings(BaseSettings):
     confidence_stale_penalty: float = Field(default=0.15, ge=0.0, le=0.5)
     confidence_high_cutoff: float = Field(default=75.0, ge=0.0, le=100.0)
     confidence_medium_cutoff: float = Field(default=50.0, ge=0.0, le=100.0)
+    risk_cutoff_mode: Literal["daily_percentile", "static"] = "daily_percentile"
+    risk_top_frac_extremo: float = Field(default=0.001, gt=0.0, lt=0.5)
+    risk_top_frac_alto: float = Field(default=0.01, gt=0.0, lt=0.5)
+    risk_top_frac_moderado: float = Field(default=0.05, gt=0.0, lt=0.5)
+    risk_floor_extremo: float = Field(default=0.001, ge=0.0, le=1.0)
+    risk_floor_alto: float = Field(default=0.0003, ge=0.0, le=1.0)
+    risk_floor_moderado: float = Field(default=0.0001, ge=0.0, le=1.0)
 
 
 @lru_cache

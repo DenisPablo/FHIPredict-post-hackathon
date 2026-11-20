@@ -27,6 +27,13 @@ export interface ForecastFeature {
   properties: CellProperties;
 }
 
+export interface RiskCutoffsMeta {
+  mode: 'daily_percentile' | 'static';
+  Extremo: number;
+  Alto: number;
+  Moderado: number;
+}
+
 export interface ForecastResponse {
   type: 'FeatureCollection';
   meta: {
@@ -37,6 +44,7 @@ export interface ForecastResponse {
     fecha_hasta: string;
     dates_available: string[];
     counts: Record<RiskCategory, number>;
+    cutoffs?: RiskCutoffsMeta;
     returned: number;
   };
   features: ForecastFeature[];

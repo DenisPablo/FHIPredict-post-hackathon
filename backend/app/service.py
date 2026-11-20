@@ -297,6 +297,20 @@ class ForecastService:
                 asyncio.create_task(asyncio.to_thread(self._maybe_save_snapshot_24h, new_cache))
             return new_cache
 
+    def _resolve_risk_cutoffs(self, reference_probs: np.ndarray) -> tuple[dict[str, float], str]:
+        if self.settings.risk_cutoff_mode == "static":
+            return dict(self.predictor.risk_cutoffs), "static"
+        cutoffs = self.predictor.compute_daily_percentile_cutoffs(
+            reference_probs,
+            top_frac_extremo=self.settings.risk_top_frac_extremo,
+            top_frac_alto=self.settings.risk_top_frac_alto,
+            top_frac_moderado=self.settings.risk_top_frac_moderado,
+            floor_extremo=self.settings.risk_floor_extremo,
+            floor_alto=self.settings.risk_floor_alto,
+            floor_moderado=self.settings.risk_floor_moderado,
+        )
+        return cutoffs, "daily_percentile"
+
     def _maybe_save_snapshot_24h(self, cached: CachedForecast) -> bool:
         """Persist today's 24h prediction snapshot without disrupting forecast serving."""
         if self._snapshot_store is None or len(cached.dates) == 0:
@@ -304,7 +318,8 @@ class ForecastService:
         try:
             issued_date = cached.generated_at[:10]
             probs_24h = cached.probs[:, 0]
-            categories = self.predictor.categorize(probs_24h)
+            cutoffs, _ = self._resolve_risk_cutoffs(probs_24h)
+            categories = self.predictor.categorize(probs_24h, cutoffs=cutoffs)
             return self._snapshot_store.save_snapshot_24h(
                 issued_date=issued_date,
                 target_date=cached.dates[0],
@@ -500,12 +515,14 @@ class ForecastService:
         if mode == "day":
             idx = max(0, min(day_offset, n_avail - 1))
             prob = cached.probs[:, idx]
+            ref_probs = prob
             w_idx = idx
             fecha_desde = cached.dates[idx]
             fecha_hasta = cached.dates[idx]
         else:
             span = max(1, min(days, n_avail))
             sub = cached.probs[:, :span]
+            ref_probs = sub
             # Peak daily probability in [0..span-1] (Fréchet bound under strong inter-day autocorrelation,
             # preserving the 24h calibration scale of `self.predictor.risk_cutoffs`).
             w_idx_arr = np.argmax(sub, axis=1)
@@ -514,8 +531,9 @@ class ForecastService:
             fecha_desde = cached.dates[0]
             fecha_hasta = cached.dates[span - 1]
 
-        # Categorize using daily cutoffs (consistent scale)
-        cats = self.predictor.categorize(prob)
+        # Categorize using active daily-percentile or static cutoffs (consistent 24h scale)
+        cutoffs, cutoff_mode = self._resolve_risk_cutoffs(ref_probs)
+        cats = self.predictor.categorize(prob, cutoffs=cutoffs)
 
         # Summary counts across ALL Argentina cells
         counts = {
@@ -599,6 +617,12 @@ class ForecastService:
                 "fecha_hasta": fecha_hasta,
                 "dates_available": cached.dates,
                 "counts": counts,
+                "cutoffs": {
+                    "mode": cutoff_mode,
+                    "Extremo": round(float(cutoffs["Extremo"]), 6),
+                    "Alto": round(float(cutoffs["Alto"]), 6),
+                    "Moderado": round(float(cutoffs["Moderado"]), 6),
+                },
                 "returned": len(features),
             },
             "features": features,

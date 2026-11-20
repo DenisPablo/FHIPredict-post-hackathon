@@ -1,15 +1,30 @@
 import { COPY, type Lang } from '../i18n';
-import type { RiskCategory } from '../api/forecast';
+import type { RiskCategory, RiskCutoffsMeta } from '../api/forecast';
 
-const RISK_SCALE: { key: RiskCategory; range: string; color: string }[] = [
-  { key: 'Extremo', range: '≥ 5.79%', color: '#FF6759' },
-  { key: 'Alto', range: '1.29 – 5.79%', color: '#FF9C55' },
-  { key: 'Moderado', range: '0.35 – 1.29%', color: '#68D9D0' },
-  { key: 'Bajo', range: '< 0.35%', color: '#3D786E' },
+const STATIC_CUTOFFS = {
+  Extremo: 0.05785066,
+  Alto: 0.01292018,
+  Moderado: 0.00354965,
+};
+
+const RISK_META: { key: RiskCategory; color: string }[] = [
+  { key: 'Extremo', color: '#FF6759' },
+  { key: 'Alto', color: '#FF9C55' },
+  { key: 'Moderado', color: '#68D9D0' },
+  { key: 'Bajo', color: '#3D786E' },
 ];
 
-export function RiskLegend({ lang }: { lang: Lang }) {
+export function RiskLegend({ lang, cutoffs }: { lang: Lang; cutoffs?: RiskCutoffsMeta }) {
   const t = COPY[lang];
+  const c = cutoffs ?? STATIC_CUTOFFS;
+  const fmt = (p: number) => (p * 100).toFixed(2);
+  const ranges: Record<RiskCategory, string> = {
+    Extremo: `≥ ${fmt(c.Extremo)}%`,
+    Alto: `${fmt(c.Alto)} – ${fmt(c.Extremo)}%`,
+    Moderado: `${fmt(c.Moderado)} – ${fmt(c.Alto)}%`,
+    Bajo: `< ${fmt(c.Moderado)}%`,
+  };
+
   return (
     <aside
       aria-label={t.legendTitle}
@@ -23,8 +38,13 @@ export function RiskLegend({ lang }: { lang: Lang }) {
           {t.demoBadge}
         </span>
       </div>
+      {cutoffs?.mode === 'daily_percentile' && (
+        <p className="mb-2 font-mono text-[10px] text-fcText-muted">
+          {t.legendDailyPercentileNote}
+        </p>
+      )}
       <ul className="space-y-1.5">
-        {RISK_SCALE.map((item) => (
+        {RISK_META.map((item) => (
           <li key={item.key} className="flex items-center justify-between gap-4 text-xs">
             <span className="inline-flex items-center gap-2 text-fcText-primary">
               <span
@@ -33,7 +53,7 @@ export function RiskLegend({ lang }: { lang: Lang }) {
               />
               {t.categories[item.key]}
             </span>
-            <span className="font-mono text-[11px] text-fcText-secondary">{item.range}</span>
+            <span className="font-mono text-[11px] text-fcText-secondary">{ranges[item.key]}</span>
           </li>
         ))}
       </ul>

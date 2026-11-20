@@ -60,9 +60,55 @@ class FireRiskPredictor:
         stability = np.clip(1.0 - (spread / 0.25), 0.2, 1.0).astype(np.float32)
         return probs_by_cut[-1], stability
 
-    def categorize(self, prob: np.ndarray) -> np.ndarray:
+    def compute_daily_percentile_cutoffs(
+        self,
+        reference_probs: np.ndarray,
+        *,
+        top_frac_extremo: float = 0.001,
+        top_frac_alto: float = 0.01,
+        top_frac_moderado: float = 0.05,
+        floor_extremo: float = 0.001,
+        floor_alto: float = 0.0003,
+        floor_moderado: float = 0.0001,
+        min_samples: int = 100,
+    ) -> dict[str, float]:
+        """Compute bounded daily-percentile cutoffs from `reference_probs`.
+
+        Lowers thresholds when predicted probabilities sit below static validation cutoffs,
+        caps at static cutoffs during severe outbreaks, clamps above safety floors on
+        near-zero days, and falls back to static cutoffs on small or degenerate inputs.
+        """
+        vals = np.asarray(reference_probs, dtype=np.float64).ravel()
+        vals = vals[np.isfinite(vals)]
+        if vals.size < min_samples:
+            return dict(self.risk_cutoffs)
+
+        vmin = float(np.min(vals))
+        vmax = float(np.max(vals))
+        if vmax - vmin <= 1e-12:
+            return dict(self.risk_cutoffs)
+
+        q_mod = float(np.quantile(vals, 1.0 - top_frac_moderado))
+        q_alt = float(np.quantile(vals, 1.0 - top_frac_alto))
+        q_ext = float(np.quantile(vals, 1.0 - top_frac_extremo))
+        if q_mod <= vmin + 1e-12:
+            return dict(self.risk_cutoffs)
+
+        mod = min(self.risk_cutoffs["Moderado"], max(floor_moderado, q_mod))
+        alt = min(self.risk_cutoffs["Alto"], max(floor_alto, q_alt))
+        ext = min(self.risk_cutoffs["Extremo"], max(floor_extremo, q_ext))
+
+        alt = max(alt, mod)
+        ext = max(ext, alt)
+        return {"Extremo": float(ext), "Alto": float(alt), "Moderado": float(mod)}
+
+    def categorize(
+        self,
+        prob: np.ndarray,
+        cutoffs: dict[str, float] | None = None,
+    ) -> np.ndarray:
         """Map probabilities to (`Extremo`, `Alto`, `Moderado`, `Bajo`)."""
-        c = self.risk_cutoffs
+        c = cutoffs if cutoffs is not None else self.risk_cutoffs
         return np.where(
             prob >= c["Extremo"],
             "Extremo",

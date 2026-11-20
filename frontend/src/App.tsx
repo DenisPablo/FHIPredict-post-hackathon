@@ -226,7 +226,7 @@ export function App() {
 
       {/* Bottom-right floating risk scale legend */}
       <div className="pointer-events-none absolute bottom-10 right-4 z-10 hidden md:block">
-        <RiskLegend lang={lang} />
+        <RiskLegend lang={lang} cutoffs={meta?.cutoffs} />
       </div>
 
       {/* Bottom floating time-range bar */}
