@@ -63,7 +63,7 @@ For `mode="day"`, `query_geojson` SHALL slice `cached.probs[:, idx]` (`0 <= idx 
 For `mode="window"`, `query_geojson` MUST take the peak daily probability `max(cached.probs[:, :span], axis=1)` (`span = clamp(days, 1, n_avail)`) as the comonotonic Fréchet bound preserving the 24h probability scale, and resolve cutoffs against `cached.probs[:, :span]`.
 `ForecastService._resolve_risk_cutoffs` MUST inspect `RISK_CUTOFF_MODE`:
 - When `"static"`, it SHALL return `predictor.risk_cutoffs`.
-- When `"daily_percentile"` (default), `FireRiskPredictor.compute_daily_percentile_cutoffs` MUST compute empirical quantiles at `1 - RISK_TOP_FRAC_MODERADO` (`0.05`), `1 - RISK_TOP_FRAC_ALTO` (`0.01`), and `1 - RISK_TOP_FRAC_EXTREMO` (`0.001`), clamp each below by `RISK_FLOOR_*` (`0.0001`, `0.0003`, `0.001`), cap each above by the static validation cutoffs, enforce `Extremo >= Alto >= Moderado`, and fall back to static validation cutoffs when finite values `< 100`, `vmax - vmin <= 1e-12`, or `q_mod <= vmin + 1e-12`.
+- When `"daily_percentile"` (default), `FireRiskPredictor.compute_daily_percentile_cutoffs` MUST compute empirical quantiles at `1 - RISK_TOP_FRAC_MODERADO` (`0.01`, top `1%`), `1 - RISK_TOP_FRAC_ALTO` (`0.003`, top `0.3%`), and `1 - RISK_TOP_FRAC_EXTREMO` (`0.0005`, top `0.05%`), clamp each below by selective `RISK_FLOOR_*` bounds (`0.002`, `0.005`, `0.015` — calibrated on Nov 20–23 `DonWeb1` empirical data to cut quiet-day false alarms by ~83% while preserving active-day capture), cap each above by the static validation cutoffs, enforce `Extremo >= Alto >= Moderado`, and fall back to static validation cutoffs when finite values `< 100`, `vmax - vmin <= 1e-12`, or `q_mod <= vmin + 1e-12`.
 
 #### Scenario: Multi-day window preserves 24h probability scale
 - **GIVEN** all `64,653` cells have a constant daily probability `0.0045` (`Moderado` in static mode, below `Alto` `0.01292`) across 15 days
@@ -73,9 +73,9 @@ For `mode="window"`, `query_geojson` MUST take the peak daily probability `max(c
 #### Scenario: Daily percentile mode adapts, caps outbreaks, clamps rainy days, and guards degenerate inputs
 - **GIVEN** `RISK_CUTOFF_MODE="daily_percentile"`
 - **WHEN** daily probabilities sit below static cutoffs with non-degenerate spread
-- **THEN** `Extremo` / `Alto` / `Moderado` cutoffs MUST drop below static cutoffs to target ~`0.1%`, `1%`, and `5%` of cells
+- **THEN** `Extremo` / `Alto` / `Moderado` cutoffs MUST drop below static cutoffs to target ~`0.05%`, `0.3%`, and `1%` of cells (clamped at or above `0.015`, `0.005`, `0.002`)
 - **AND** on severe outbreaks exceeding static cutoffs, cutoffs MUST cap at static bundle values
-- **AND** on near-zero rainy days (`<= 5e-5`), cutoffs MUST clamp at safety floors (`0.001`, `0.0003`, `0.0001`) yielding zero alerts
+- **AND** on near-zero rainy or quiet low-risk days (`<= 0.0018`), cutoffs MUST clamp at safety floors (`0.015`, `0.005`, `0.002`) yielding zero alerts
 - **AND** on constant, `< 100` sample, or tied (`q_mod <= vmin`) distributions, cutoffs MUST fall back to static bundle values.
 
 ---

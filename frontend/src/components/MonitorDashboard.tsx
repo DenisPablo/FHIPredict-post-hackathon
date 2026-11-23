@@ -5,8 +5,10 @@ import {
   buildMonitorCsv,
   fetchMonitorMetrics,
   fetchMonitorStatus,
+  fetchThresholdComparison,
   triggerMonitorRun,
   type MonitorMetricItem,
+  type ThresholdComparisonResponse,
 } from '../api/monitor';
 import type { RiskCategory } from '../api/forecast';
 import type { Lang } from '../i18n';
@@ -70,6 +72,12 @@ export function MonitorDashboard({ lang, onToggleLang, onBackToMap }: MonitorDas
     refetchInterval: (q) => (q.state.data?.running ? 2000 : false),
   });
 
+  const comparisonQuery = useQuery({
+    queryKey: ['monitor-threshold-comparison'],
+    queryFn: ({ signal }) => fetchThresholdComparison(14, signal),
+    staleTime: 60 * 1000,
+  });
+
   async function handleRun() {
     setRunError(null);
     setIsTriggering(true);
@@ -77,6 +85,7 @@ export function MonitorDashboard({ lang, onToggleLang, onBackToMap }: MonitorDas
       await triggerMonitorRun(1);
       await queryClient.invalidateQueries({ queryKey: ['monitor-status'] });
       await queryClient.invalidateQueries({ queryKey: ['monitor-metrics'] });
+      await queryClient.invalidateQueries({ queryKey: ['monitor-threshold-comparison'] });
     } catch (err) {
       setRunError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -257,6 +266,15 @@ export function MonitorDashboard({ lang, onToggleLang, onBackToMap }: MonitorDas
                 isEs={isEs}
               />
             </section>
+
+            {comparisonQuery.data && comparisonQuery.data.items.length > 0 && (
+              <ThresholdComparisonChart
+                data={comparisonQuery.data}
+                selectedDate={activeItem.target_date}
+                onSelectDate={setSelectedDate}
+                isEs={isEs}
+              />
+            )}
 
             <section className="grid gap-6 lg:grid-cols-2">
               <div className="rounded-2xl border border-space-border bg-space-surface p-4">
@@ -727,5 +745,148 @@ function MetricCard({
       </div>
       {hint && <p className="mt-2 text-xs leading-snug text-fcText-secondary">{hint}</p>}
     </div>
+  );
+}
+
+function ThresholdComparisonChart({
+  data,
+  selectedDate,
+  onSelectDate,
+  isEs,
+}: {
+  data: ThresholdComparisonResponse;
+  selectedDate: string;
+  onSelectDate: (date: string) => void;
+  isEs: boolean;
+}) {
+  const [metric, setMetric] = useState<'false_alarms' | 'hits'>('false_alarms');
+  const ordered = [...data.items].reverse();
+  const maxVal = Math.max(
+    1,
+    ...ordered.flatMap((d) =>
+      metric === 'false_alarms'
+        ? [d.previous.false_alarms_count, d.current.false_alarms_count]
+        : [d.previous.hits_count, d.current.hits_count],
+    ),
+  );
+  const { summary } = data;
+  const redPct = summary.false_alarm_reduction_pct;
+
+  return (
+    <section
+      className="rounded-2xl border border-space-border bg-space-surface p-4 sm:p-5"
+      aria-label={
+        isEs
+          ? 'Gráfico comparativo de umbrales: Anterior vs. Actual 2B'
+          : 'Threshold comparison chart: Previous vs. Current 2B'
+      }
+      role="img"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-title text-sm font-bold text-fcText-primary">
+            {isEs
+              ? 'Comparación de umbrales: Anterior vs. Actual (2B)'
+              : 'Threshold comparison: Previous vs. Current (2B)'}
+          </h2>
+          <p className="mt-0.5 text-xs text-fcText-secondary">
+            {isEs
+              ? 'Compara el perfil anterior (0.1% / 1% / 5%) contra el ajuste selectivo actual (0.05% / 0.3% / 1%) sobre cada snapshot diario.'
+              : 'Compares the previous profile (0.1% / 1% / 5%) against current selective bounds (0.05% / 0.3% / 1%) on each daily snapshot.'}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {redPct !== null && (
+            <span className="rounded-full border border-lime-brand/30 bg-lime-brand/10 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-lime-brand">
+              {isEs ? `-${redPct.toFixed(1)}% falsas alarmas` : `-${redPct.toFixed(1)}% false alarms`}
+            </span>
+          )}
+          <span className="rounded-full border border-space-border bg-space-elevated px-2.5 py-0.5 font-mono text-[11px] text-fcText-secondary">
+            {isEs
+              ? `Aciertos: ${summary.previous_total_hits}/${summary.total_positives} → ${summary.current_total_hits}/${summary.total_positives}`
+              : `Hits: ${summary.previous_total_hits}/${summary.total_positives} → ${summary.current_total_hits}/${summary.total_positives}`}
+          </span>
+          <div className="inline-flex rounded-lg border border-space-border bg-space-elevated p-0.5 font-mono text-[11px]">
+            <button
+              type="button"
+              onClick={() => setMetric('false_alarms')}
+              className={`rounded-md px-2 py-1 transition ${
+                metric === 'false_alarms'
+                  ? 'bg-space-surface text-fcText-primary shadow-sm'
+                  : 'text-fcText-secondary hover:text-fcText-primary'
+              }`}
+            >
+              {isEs ? 'Falsas alarmas' : 'False alarms'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setMetric('hits')}
+              className={`rounded-md px-2 py-1 transition ${
+                metric === 'hits'
+                  ? 'bg-space-surface text-fcText-primary shadow-sm'
+                  : 'text-fcText-secondary hover:text-fcText-primary'
+              }`}
+            >
+              {isEs ? 'Aciertos' : 'Hits'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-4 font-mono text-[11px] text-fcText-secondary">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-sm bg-[#FF9C55]/85" />
+          {isEs ? 'Anterior (0.1% / 1% / 5%)' : 'Previous (0.1% / 1% / 5%)'}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-sm bg-lime-brand" />
+          {isEs ? 'Actual 2B (0.05% / 0.3% / 1%)' : 'Current 2B (0.05% / 0.3% / 1%)'}
+        </span>
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-7 lg:grid-cols-14">
+        {ordered.map((d) => {
+          const prevVal = metric === 'false_alarms' ? d.previous.false_alarms_count : d.previous.hits_count;
+          const currVal = metric === 'false_alarms' ? d.current.false_alarms_count : d.current.hits_count;
+          const prevH = Math.max(4, Math.round((prevVal / maxVal) * 84));
+          const currH = Math.max(4, Math.round((currVal / maxVal) * 84));
+          const isSelected = d.target_date === selectedDate;
+          return (
+            <button
+              key={d.target_date}
+              type="button"
+              onClick={() => onSelectDate(d.target_date)}
+              title={`${d.target_date}: ${prevVal} → ${currVal}`}
+              className={`flex flex-col items-center rounded-xl border px-1.5 py-2 transition ${
+                isSelected
+                  ? 'border-lime-brand/60 bg-space-elevated'
+                  : 'border-space-border/60 bg-space-elevated/30 hover:border-space-border'
+              }`}
+            >
+              <div className="flex h-24 w-full items-end justify-center gap-1">
+                <div className="flex flex-col items-center">
+                  <span className="mb-1 font-mono text-[9px] text-[#FF9C55]">{prevVal}</span>
+                  <div
+                    className="w-3 rounded-t bg-[#FF9C55]/85 transition-all"
+                    style={{ height: `${prevH}px` }}
+                  />
+                </div>
+                <div className="flex flex-col items-center">
+                  <span className="mb-1 font-mono text-[9px] text-lime-brand">{currVal}</span>
+                  <div
+                    className="w-3 rounded-t bg-lime-brand transition-all"
+                    style={{ height: `${currH}px` }}
+                  />
+                </div>
+              </div>
+              <span className="mt-1.5 font-mono text-[10px] text-fcText-secondary">
+                {d.target_date.slice(5)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }

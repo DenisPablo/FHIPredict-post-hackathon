@@ -33,9 +33,9 @@ El mapa está pensado para ubicar rápido dónde concentrar la atención territo
 
 | Categoría | Color en mapa | Significado operativo |
 |---|---|---|
-| **Extremo** | `#FF6759` (coral/rojo) | Máxima prioridad de vigilancia (top `0,1 %` del día, acotado). |
-| **Alto** | `#FF9C55` (naranja) | Prioridad alta (top `1 %` del día, acotado). |
-| **Moderado** | `#68D9D0` (turquesa) | Condiciones favorables que requieren seguimiento (top `5 %` del día, acotado). |
+| **Extremo** | `#FF6759` (coral/rojo) | Máxima prioridad de vigilancia (top `0,05 %` del día, piso `1,5 %`). |
+| **Alto** | `#FF9C55` (naranja) | Prioridad alta (top `0,3 %` del día, piso `0,5 %`). |
+| **Moderado** | `#68D9D0` (turquesa) | Condiciones favorables que requieren seguimiento (top `1 %` del día, piso `0,2 %`). |
 | **Bajo** | `#3D786E` (verde oscuro) | Riesgo relativo bajo (oculto por defecto para mantener limpio el mapa). |
 
 ---

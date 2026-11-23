@@ -56,14 +56,14 @@ Clicking a base-risk point SHALL open a popup displaying `cell_id`, `riesgo_pct`
 - **THEN** `onFlyTo` MUST be invoked with Córdoba coordinates (`[-63.8, -32.1], 6.4, '14'`) and cell `#101` coordinates (`[-65.5, -33.2], 9.2, 'cell-101'`).
 
 #### Scenario: RiskLegend adapts between static fallback and daily_percentile metadata
-- **GIVEN** `RiskLegend` rendered without `cutoffs` vs with `cutoffs={{ mode: 'daily_percentile', Extremo: 0.010208, Alto: 0.002737, Moderado: 0.001113 }}`
+- **GIVEN** `RiskLegend` rendered without `cutoffs` vs with `cutoffs={{ mode: 'daily_percentile', Extremo: 0.015, Alto: 0.005, Moderado: 0.002 }}`
 - **WHEN** rendered in Spanish
-- **THEN** omitted `cutoffs` MUST show static percentages without the percentile note, while `daily_percentile` MUST display `≥ 1.02%`, `0.27 – 1.02%`, `0.11 – 0.27%`, `< 0.11%`, and `"Umbral por percentil diario (top 5% / 1% / 0.1%)"`.
+- **THEN** omitted `cutoffs` MUST show static percentages without the percentile note, while `daily_percentile` MUST display `≥ 1.50%`, `0.50 – 1.50%`, `0.20 – 0.50%`, `< 0.20%`, and `"Umbral por percentil diario (top 1% / 0.3% / 0.05%)"`.
 
 ---
 
 ### Requirement FUI-4: Empirical Monitor Dashboard (`/monitor`) & CSV Export
-`MonitorDashboard` MUST fetch `/api/v1/monitor/metrics?limit=30` and `/api/v1/monitor/status` (polling every `2000 ms` while `running === true`), display a toggleable 3-step `QuickInterpretationGuide`, `PlainLanguageSummary`, 6 KPI cards (`ROC-AUC`, `PR-AUC`, `Calibration`, `Brier`, `Hits / Misses`, `False Alarms`), `CategoryCaptureChart`, interactive `DailyHistoryChart` (up to 14 chronological days), category breakdown table, and daily history table.
+`MonitorDashboard` MUST fetch `/api/v1/monitor/metrics?limit=30`, `/api/v1/monitor/status` (polling every `2000 ms` while `running === true`), and `/api/v1/monitor/threshold-comparison?limit=14`, displaying a toggleable 3-step `QuickInterpretationGuide`, `PlainLanguageSummary`, 6 KPI cards (`ROC-AUC`, `PR-AUC`, `Calibration`, `Brier`, `Hits / Misses`, `False Alarms`), `CategoryCaptureChart`, interactive `DailyHistoryChart` (up to 14 chronological days), interactive `ThresholdComparisonChart` (paired previous vs. current `2B` bars with false-alarm reduction summary and `False alarms` / `Hits` toggle), category breakdown table, and daily history table.
 `buildMonitorCsv` SHALL serialize metric items into RFC-4180 CSV rows including `expected_positives` and `capture_rate_pct`, and `Download CSV` MUST export `fhipredict-monitoreo-viirs.csv` with a UTF-8 BOM.
 
 #### Scenario: MonitorDashboard renders metrics, charts, and enables CSV export

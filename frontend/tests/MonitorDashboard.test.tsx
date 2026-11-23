@@ -1,9 +1,9 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { MonitorDashboard } from '../src/components/MonitorDashboard';
-import { buildMonitorCsv, type MonitorMetricItem } from '../src/api/monitor';
+import { buildMonitorCsv, type MonitorMetricItem, type ThresholdComparisonResponse } from '../src/api/monitor';
 
 const SAMPLE_ITEM: MonitorMetricItem = {
   target_date: '2026-11-18',
@@ -29,6 +29,47 @@ const SAMPLE_ITEM: MonitorMetricItem = {
   evaluated_at: '2026-11-18T15:00:00+00:00',
 };
 
+const SAMPLE_COMPARISON: ThresholdComparisonResponse = {
+  profiles: {
+    previous: { label: 'previous_0.1_1_5pct' },
+    current: { label: 'current_2B_selective' },
+  },
+  summary: {
+    days_compared: 1,
+    total_positives: 12,
+    previous_total_hits: 8,
+    current_total_hits: 6,
+    previous_total_false_alarms: 3200,
+    current_total_false_alarms: 544,
+    false_alarm_reduction_pct: 83.0,
+  },
+  items: [
+    {
+      target_date: '2026-11-18',
+      issued_date: '2026-11-18',
+      n_positives: 12,
+      previous: {
+        alerts_count: 3208,
+        hits_count: 8,
+        misses_count: 4,
+        false_alarms_count: 3200,
+        capture_rate: 8 / 12,
+        precision: 8 / 3208,
+        cutoffs: { Extremo: 0.01, Alto: 0.003, Moderado: 0.001 },
+      },
+      current: {
+        alerts_count: 550,
+        hits_count: 6,
+        misses_count: 6,
+        false_alarms_count: 544,
+        capture_rate: 0.5,
+        precision: 6 / 550,
+        cutoffs: { Extremo: 0.015, Alto: 0.005, Moderado: 0.002 },
+      },
+    },
+  ],
+};
+
 describe('buildMonitorCsv', () => {
   it('formats headers and metric rows cleanly', () => {
     const csv = buildMonitorCsv([SAMPLE_ITEM]);
@@ -45,6 +86,9 @@ describe('MonitorDashboard', () => {
       const url = String(input);
       if (url.includes('/api/v1/monitor/metrics')) {
         return new Response(JSON.stringify({ items: [SAMPLE_ITEM] }), { status: 200 });
+      }
+      if (url.includes('/api/v1/monitor/threshold-comparison')) {
+        return new Response(JSON.stringify(SAMPLE_COMPARISON), { status: 200 });
       }
       return new Response(
         JSON.stringify({ running: false, last_run_at: null, last_result: null, last_error: null }),
@@ -74,6 +118,14 @@ describe('MonitorDashboard', () => {
 
     const csvButton = screen.getByRole('button', { name: /Descargar CSV/i });
     expect(csvButton).toBeEnabled();
+
+    expect(screen.getByText(/Comparación de umbrales: Anterior vs\. Actual \(2B\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/-83\.0% falsas alarmas/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Gráfico comparativo de umbrales/i)).toBeInTheDocument();
+    expect(screen.getByText('3200')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Aciertos$/i }));
+    expect(screen.queryByText('3200')).not.toBeInTheDocument();
+    expect(screen.getByText('6')).toBeInTheDocument();
 
     fetchSpy.mockRestore();
   });

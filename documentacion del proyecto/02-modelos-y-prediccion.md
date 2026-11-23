@@ -73,8 +73,8 @@ En producción, FHIPredict separa dos lógicas según el tipo de capa:
 
 1. **Capa de ignición (`/api/v1/forecast`), `/monitor` y selección de fuentes en `/api/v1/spread`:**
    - Usan **percentiles diarios acotados** (`RISK_CUTOFF_MODE=daily_percentile`).
-   - En días templados o fuera de temporada, el sistema baja los umbrales para seguir destacando el **top 0,1 % (`Extremo`)**, **top 1 % (`Alto`)** y **top 5 % (`Moderado`)** de mayor riesgo relativo del día.
-   - Tiene **pisos de seguridad** para que en días muy lluviosos (probabilidades casi nulas) no invente alertas falsas, y **techos** fijados en los umbrales de validación para no perder sensibilidad en olas de calor extremas.
+   - En días templados o fuera de temporada, el sistema baja los umbrales para seguir destacando el **top 0,05 % (`Extremo`)**, **top 0,3 % (`Alto`)** y **top 1 % (`Moderado`)** de mayor riesgo relativo del día.
+   - Tiene **pisos de seguridad selectivos** (`1,5 %` en `Extremo`, `0,5 %` en `Alto` y `0,2 %` en `Moderado`) para evitar ruido masivo en días tranquilos o lluviosos, y **techos** fijados en los umbrales de validación para no perder sensibilidad en olas de calor extremas.
    - Con esta alineación, toda celda no industrial que el mapa marca en `Alto` o `Extremo` también se evalúa como fuente potencial en la capa de propagación.
 
 2. **Categorías de la capa de propagación (`/api/v1/spread`):**

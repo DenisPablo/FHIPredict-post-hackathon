@@ -9,6 +9,56 @@ import lightgbm as lgb
 import numpy as np
 
 
+DEFAULT_STATIC_RISK_CUTOFFS: dict[str, float] = {
+    "Extremo": 0.057850664396194046,
+    "Alto": 0.012920176782054635,
+    "Moderado": 0.0035496501995956643,
+}
+
+
+def compute_daily_percentile_cutoffs(
+    reference_probs: np.ndarray,
+    static_cutoffs: dict[str, float],
+    *,
+    top_frac_extremo: float = 0.0005,
+    top_frac_alto: float = 0.003,
+    top_frac_moderado: float = 0.01,
+    floor_extremo: float = 0.015,
+    floor_alto: float = 0.005,
+    floor_moderado: float = 0.002,
+    min_samples: int = 100,
+) -> dict[str, float]:
+    """Compute bounded daily-percentile cutoffs from `reference_probs`.
+
+    Lowers thresholds when predicted probabilities sit below static validation cutoffs,
+    caps at static cutoffs during severe outbreaks, clamps above safety floors on
+    quiet or near-zero days, and falls back to static cutoffs on small or degenerate inputs.
+    """
+    vals = np.asarray(reference_probs, dtype=np.float64).ravel()
+    vals = vals[np.isfinite(vals)]
+    if vals.size < min_samples:
+        return dict(static_cutoffs)
+
+    vmin = float(np.min(vals))
+    vmax = float(np.max(vals))
+    if vmax - vmin <= 1e-12:
+        return dict(static_cutoffs)
+
+    q_mod = float(np.quantile(vals, 1.0 - top_frac_moderado))
+    q_alt = float(np.quantile(vals, 1.0 - top_frac_alto))
+    q_ext = float(np.quantile(vals, 1.0 - top_frac_extremo))
+    if q_mod <= vmin + 1e-12:
+        return dict(static_cutoffs)
+
+    mod = min(static_cutoffs["Moderado"], max(floor_moderado, q_mod))
+    alt = min(static_cutoffs["Alto"], max(floor_alto, q_alt))
+    ext = min(static_cutoffs["Extremo"], max(floor_extremo, q_ext))
+
+    alt = max(alt, mod)
+    ext = max(ext, alt)
+    return {"Extremo": float(ext), "Alto": float(alt), "Moderado": float(mod)}
+
+
 @dataclass
 class FireRiskPredictor:
     """Self-contained predictor loaded from `fire_risk_bundle.joblib`."""
@@ -64,43 +114,26 @@ class FireRiskPredictor:
         self,
         reference_probs: np.ndarray,
         *,
-        top_frac_extremo: float = 0.001,
-        top_frac_alto: float = 0.01,
-        top_frac_moderado: float = 0.05,
-        floor_extremo: float = 0.001,
-        floor_alto: float = 0.0003,
-        floor_moderado: float = 0.0001,
+        top_frac_extremo: float = 0.0005,
+        top_frac_alto: float = 0.003,
+        top_frac_moderado: float = 0.01,
+        floor_extremo: float = 0.015,
+        floor_alto: float = 0.005,
+        floor_moderado: float = 0.002,
         min_samples: int = 100,
     ) -> dict[str, float]:
-        """Compute bounded daily-percentile cutoffs from `reference_probs`.
-
-        Lowers thresholds when predicted probabilities sit below static validation cutoffs,
-        caps at static cutoffs during severe outbreaks, clamps above safety floors on
-        near-zero days, and falls back to static cutoffs on small or degenerate inputs.
-        """
-        vals = np.asarray(reference_probs, dtype=np.float64).ravel()
-        vals = vals[np.isfinite(vals)]
-        if vals.size < min_samples:
-            return dict(self.risk_cutoffs)
-
-        vmin = float(np.min(vals))
-        vmax = float(np.max(vals))
-        if vmax - vmin <= 1e-12:
-            return dict(self.risk_cutoffs)
-
-        q_mod = float(np.quantile(vals, 1.0 - top_frac_moderado))
-        q_alt = float(np.quantile(vals, 1.0 - top_frac_alto))
-        q_ext = float(np.quantile(vals, 1.0 - top_frac_extremo))
-        if q_mod <= vmin + 1e-12:
-            return dict(self.risk_cutoffs)
-
-        mod = min(self.risk_cutoffs["Moderado"], max(floor_moderado, q_mod))
-        alt = min(self.risk_cutoffs["Alto"], max(floor_alto, q_alt))
-        ext = min(self.risk_cutoffs["Extremo"], max(floor_extremo, q_ext))
-
-        alt = max(alt, mod)
-        ext = max(ext, alt)
-        return {"Extremo": float(ext), "Alto": float(alt), "Moderado": float(mod)}
+        """Compute bounded daily-percentile cutoffs from `reference_probs`."""
+        return compute_daily_percentile_cutoffs(
+            reference_probs,
+            self.risk_cutoffs,
+            top_frac_extremo=top_frac_extremo,
+            top_frac_alto=top_frac_alto,
+            top_frac_moderado=top_frac_moderado,
+            floor_extremo=floor_extremo,
+            floor_alto=floor_alto,
+            floor_moderado=floor_moderado,
+            min_samples=min_samples,
+        )
 
     def categorize(
         self,

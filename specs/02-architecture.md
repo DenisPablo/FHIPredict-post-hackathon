@@ -92,7 +92,7 @@ FHIPredict-post-hackathon/
 
 ### Risk Cutoffs, Confidence & Memory Budget Controls
 - **Cutoffs (`RISK_CUTOFF_MODE`)**:
-  - `daily_percentile` (default): `FireRiskPredictor.compute_daily_percentile_cutoffs` derives top `5%` (`RISK_TOP_FRAC_MODERADO=0.05`), `1%` (`RISK_TOP_FRAC_ALTO=0.01`), and `0.1%` (`RISK_TOP_FRAC_EXTREMO=0.001`) quantiles, clamped between safety floors (`RISK_FLOOR_MODERADO=0.0001`, `RISK_FLOOR_ALTO=0.0003`, `RISK_FLOOR_EXTREMO=0.001`) and static bundle validation cutoffs (`0.003550` / `0.012920` / `0.057851`), with static fallback on `< 100` finite samples or degenerate/tied distributions.
+  - `daily_percentile` (default): `FireRiskPredictor.compute_daily_percentile_cutoffs` derives top `1%` (`RISK_TOP_FRAC_MODERADO=0.01`), `0.3%` (`RISK_TOP_FRAC_ALTO=0.003`), and `0.05%` (`RISK_TOP_FRAC_EXTREMO=0.0005`) quantiles, clamped between selective safety floors (`RISK_FLOOR_MODERADO=0.002`, `RISK_FLOOR_ALTO=0.005`, `RISK_FLOOR_EXTREMO=0.015`) and static bundle validation cutoffs (`0.003550` / `0.012920` / `0.057851`), with static fallback on `< 100` finite samples or degenerate/tied distributions.
   - `static`: uses fixed validation cutoffs from `fire_risk_bundle.joblib`.
 - **Heuristic Confidence**: `stability * clip(1 - day_idx * CONFIDENCE_HORIZON_DECAY_PER_DAY, 0.35, 1.0) * freshness_factor * extra_factor * 100`, clamped to `[5.0, 99.0]`, where `CONFIDENCE_STALE_PENALTY=0.15`, `CONFIDENCE_HIGH_CUTOFF=75.0` (`Alta`), and `CONFIDENCE_MEDIUM_CUTOFF=50.0` (`Media`, else `Baja`). Spread applies `extra_factor=0.9`.
 - **Weather Grid & Memory Budget**:

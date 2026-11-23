@@ -38,3 +38,7 @@
 - [x] **M3 — Documentation Sync & `openspec/` SDD Bootstrap**
   - Synchronized `README.md`, `specs/01-spec.md`, `specs/02-architecture.md`, and `specs/03-tasks.md` with verified codebase state (`33` backend tests across 7 files, `9` frontend tests across 5 files, `documentacion del proyecto/`, Docker/GHCR + `DonWeb1` native `systemd` deployment).
   - Created living `openspec/` structure (`config.yaml`, `README.md`, 5 RFC 2119 domain specs under `openspec/specs/*/spec.md`, and `openspec/changes/.gitkeep`) for multi-machine Spec-Driven Development.
+
+- [x] **M4 — Selective Daily-Percentile Threshold Tuning (`2B`)**
+  - Tightened `RISK_TOP_FRAC_*` defaults (`0.0005` / `0.003` / `0.01`) and raised safety floors `RISK_FLOOR_*` (`0.015` / `0.005` / `0.002`) in `backend/app/config.py` and `backend/app/predictor.py` based on live `DonWeb1` empirical monitor validation (`Nov 20–23`, cutting quiet-day false alarms by ~83% while preserving `4/4` capture on active-signal days).
+  - Updated `backend/tests/test_forecast.py`, `frontend/src/i18n.ts`, `frontend/tests/RiskLegend.test.tsx`, and synchronized `openspec/specs/{fire-risk-forecast,frontend-ui}/spec.md`, `README.md`, `specs/01-spec.md..03-tasks.md`, and `documentacion del proyecto/`.

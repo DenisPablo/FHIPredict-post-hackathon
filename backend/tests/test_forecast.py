@@ -196,17 +196,17 @@ def test_daily_percentile_cutoffs_adapt_underestimated_distribution():
 
     probs = np.concatenate(
         [
-            np.linspace(1e-5, 0.0004, 9500),
-            np.linspace(0.00041, 0.0015, 400),
-            np.linspace(0.00151, 0.005, 90),
-            np.linspace(0.0051, 0.02, 10),
+            np.linspace(1e-5, 0.0025, 9900),
+            np.linspace(0.00251, 0.008, 70),
+            np.linspace(0.0081, 0.025, 25),
+            np.linspace(0.0251, 0.045, 5),
         ]
     ).astype(np.float32)
 
     cutoffs = predictor.compute_daily_percentile_cutoffs(probs)
-    assert cutoffs["Extremo"] < predictor.risk_cutoffs["Extremo"]
-    assert cutoffs["Alto"] < predictor.risk_cutoffs["Alto"]
-    assert cutoffs["Moderado"] < predictor.risk_cutoffs["Moderado"]
+    assert 0.015 <= cutoffs["Extremo"] < predictor.risk_cutoffs["Extremo"]
+    assert 0.005 <= cutoffs["Alto"] < predictor.risk_cutoffs["Alto"]
+    assert 0.002 <= cutoffs["Moderado"] < predictor.risk_cutoffs["Moderado"]
     assert cutoffs["Extremo"] >= cutoffs["Alto"] >= cutoffs["Moderado"]
 
     cats = predictor.categorize(probs, cutoffs=cutoffs)
@@ -215,9 +215,9 @@ def test_daily_percentile_cutoffs_adapt_underestimated_distribution():
     high_share = float(np.sum(np.isin(cats, ["Extremo", "Alto"]))) / n
     mod_share = float(np.sum(np.isin(cats, ["Extremo", "Alto", "Moderado"]))) / n
 
-    assert 0.0005 <= ext_share <= 0.0015
-    assert 0.009 <= high_share <= 0.011
-    assert 0.048 <= mod_share <= 0.052
+    assert 0.0003 <= ext_share <= 0.0007
+    assert 0.0025 <= high_share <= 0.0035
+    assert 0.009 <= mod_share <= 0.011
 
 
 def test_daily_percentile_cutoffs_guards():
@@ -232,8 +232,14 @@ def test_daily_percentile_cutoffs_guards():
     # Near-zero rainy day: quantiles fall below safety floors -> clamped at floors, zero alerts
     rainy = np.linspace(1e-7, 5e-5, 10_000, dtype=np.float32)
     rainy_cutoffs = predictor.compute_daily_percentile_cutoffs(rainy)
-    assert rainy_cutoffs == {"Extremo": 0.001, "Alto": 0.0003, "Moderado": 0.0001}
+    assert rainy_cutoffs == {"Extremo": 0.015, "Alto": 0.005, "Moderado": 0.002}
     assert np.all(predictor.categorize(rainy, cutoffs=rainy_cutoffs) == "Bajo")
+
+    # Quiet low-risk day (< 0.18%): quantiles fall below selective safety floors -> zero alerts
+    quiet = np.linspace(1e-5, 0.0018, 10_000, dtype=np.float32)
+    quiet_cutoffs = predictor.compute_daily_percentile_cutoffs(quiet)
+    assert quiet_cutoffs == {"Extremo": 0.015, "Alto": 0.005, "Moderado": 0.002}
+    assert np.all(predictor.categorize(quiet, cutoffs=quiet_cutoffs) == "Bajo")
 
     # Constant or too-small arrays -> fall back to static cutoffs
     assert predictor.compute_daily_percentile_cutoffs(np.full(10_000, 0.0045, dtype=np.float32)) == predictor.risk_cutoffs
@@ -262,7 +268,7 @@ def test_query_geojson_and_snapshot_use_daily_percentile_cutoffs(tmp_path: Path)
     dates = ["2026-11-18", "2026-11-19", "2026-11-20"]
 
     idx = np.linspace(0.0, 1.0, n_cells, dtype=np.float64)
-    day_probs = (1e-5 + 0.01 * (idx**30)).astype(np.float32)
+    day_probs = (1e-5 + 0.022 * (idx**200)).astype(np.float32)
     probs = np.repeat(day_probs[:, None], n_days, axis=1)
     stability = np.full((n_cells, n_days), 0.9, dtype=np.float16)
     zeros_gd = np.zeros((n_grid, n_days), dtype=np.float32)
@@ -290,9 +296,9 @@ def test_query_geojson_and_snapshot_use_daily_percentile_cutoffs(tmp_path: Path)
 
     geo = svc.query_geojson(cached=cached, mode="day", day_offset=0, min_risk="Moderado")
     assert geo["meta"]["cutoffs"]["mode"] == "daily_percentile"
-    assert 60 <= geo["meta"]["counts"]["Extremo"] <= 70
-    assert 570 <= geo["meta"]["counts"]["Alto"] <= 595
-    assert 2570 <= geo["meta"]["counts"]["Moderado"] <= 2600
+    assert 28 <= geo["meta"]["counts"]["Extremo"] <= 38
+    assert 155 <= geo["meta"]["counts"]["Alto"] <= 170
+    assert 445 <= geo["meta"]["counts"]["Moderado"] <= 465
 
     assert svc._maybe_save_snapshot_24h(cached) is True
     assert svc._snapshot_store is not None

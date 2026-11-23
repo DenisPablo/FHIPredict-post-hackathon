@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ..config import Settings
+from ..predictor import DEFAULT_STATIC_RISK_CUTOFFS, compute_daily_percentile_cutoffs
 from .evaluator import (
     EvaluationStore,
     build_ground_truth_vector,
@@ -30,13 +31,32 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+PREVIOUS_THRESHOLD_PROFILE: dict[str, float] = {
+    "top_frac_extremo": 0.001,
+    "top_frac_alto": 0.01,
+    "top_frac_moderado": 0.05,
+    "floor_extremo": 0.001,
+    "floor_alto": 0.0003,
+    "floor_moderado": 0.0001,
+}
+
 
 class MonitorService:
     """Coordinates FIRMS VIIRS ingestion, daily evaluation, and lightweight API queries."""
 
-    def __init__(self, settings: Settings, baseline: CellBaseline) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        baseline: CellBaseline,
+        static_risk_cutoffs: dict[str, float] | None = None,
+    ) -> None:
         self.settings = settings
         self.baseline = baseline
+        self.static_risk_cutoffs = (
+            dict(static_risk_cutoffs)
+            if static_risk_cutoffs is not None
+            else dict(DEFAULT_STATIC_RISK_CUTOFFS)
+        )
         db_path = settings.monitor_dir / "monitor.duckdb"
         self.snap_store = SnapshotStore(db_path=db_path, memory_limit=settings.monitor_duckdb_memory_limit)
         self.viirs_store = ViirsStore(db_path=db_path, memory_limit=settings.monitor_duckdb_memory_limit)
@@ -201,6 +221,105 @@ class MonitorService:
 
     def list_metrics(self, limit: int = 30) -> list[dict[str, Any]]:
         return self.eval_store.list_metrics(limit=limit)
+
+    def _eval_threshold_profile(
+        self,
+        probs_24h: np.ndarray,
+        y_true: np.ndarray,
+        n_pos: int,
+        profile: dict[str, float],
+    ) -> dict[str, Any]:
+        cutoffs = compute_daily_percentile_cutoffs(
+            probs_24h,
+            self.static_risk_cutoffs,
+            top_frac_extremo=profile["top_frac_extremo"],
+            top_frac_alto=profile["top_frac_alto"],
+            top_frac_moderado=profile["top_frac_moderado"],
+            floor_extremo=profile["floor_extremo"],
+            floor_alto=profile["floor_alto"],
+            floor_moderado=profile["floor_moderado"],
+        )
+        alerts_mask = probs_24h >= cutoffs["Moderado"]
+        alerts_count = int(np.sum(alerts_mask))
+        hits_count = int(np.sum(alerts_mask & (y_true == 1)))
+        misses_count = int(np.sum((~alerts_mask) & (y_true == 1)))
+        false_alarms_count = int(np.sum(alerts_mask & (y_true == 0)))
+        return {
+            "alerts_count": alerts_count,
+            "hits_count": hits_count,
+            "misses_count": misses_count,
+            "false_alarms_count": false_alarms_count,
+            "capture_rate": (hits_count / n_pos) if n_pos > 0 else None,
+            "precision": (hits_count / alerts_count) if alerts_count > 0 else None,
+            "cutoffs": {k: round(float(v), 6) for k, v in cutoffs.items()},
+        }
+
+    def compare_threshold_profiles(self, limit: int = 14) -> dict[str, Any]:
+        """Compare previous (`0.1/1/5%`) vs. current selective (`2B`) thresholds across stored days."""
+        records = self.eval_store.list_metrics(limit=limit)
+        current_profile: dict[str, float] = {
+            "top_frac_extremo": self.settings.risk_top_frac_extremo,
+            "top_frac_alto": self.settings.risk_top_frac_alto,
+            "top_frac_moderado": self.settings.risk_top_frac_moderado,
+            "floor_extremo": self.settings.risk_floor_extremo,
+            "floor_alto": self.settings.risk_floor_alto,
+            "floor_moderado": self.settings.risk_floor_moderado,
+        }
+
+        items: list[dict[str, Any]] = []
+        tot_pos = prev_hits = curr_hits = prev_fa = curr_fa = 0
+
+        for rec in records:
+            target_date = str(rec["target_date"])
+            issued_date = str(rec["issued_date"])
+            snap = self.snap_store.load_snapshot_24h(issued_date)
+            if len(snap["cell_id"]) == 0:
+                continue
+
+            viirs = self.viirs_store.load_daily_detections(target_date)
+            y_true, _, _ = build_ground_truth_vector(
+                snap["cell_id"],
+                viirs,
+                min_detections=1,
+                min_frp_mw=float(rec["min_frp_mw"]),
+            )
+            n_pos = int(np.sum(y_true))
+            prev_stats = self._eval_threshold_profile(snap["prob_24h"], y_true, n_pos, PREVIOUS_THRESHOLD_PROFILE)
+            curr_stats = self._eval_threshold_profile(snap["prob_24h"], y_true, n_pos, current_profile)
+
+            tot_pos += n_pos
+            prev_hits += prev_stats["hits_count"]
+            curr_hits += curr_stats["hits_count"]
+            prev_fa += prev_stats["false_alarms_count"]
+            curr_fa += curr_stats["false_alarms_count"]
+
+            items.append(
+                {
+                    "target_date": target_date,
+                    "issued_date": issued_date,
+                    "n_positives": n_pos,
+                    "previous": prev_stats,
+                    "current": curr_stats,
+                }
+            )
+
+        fa_reduction_pct = round((1.0 - (curr_fa / prev_fa)) * 100.0, 1) if prev_fa > 0 else None
+        return {
+            "profiles": {
+                "previous": {"label": "previous_0.1_1_5pct", **PREVIOUS_THRESHOLD_PROFILE},
+                "current": {"label": "current_2B_selective", **current_profile},
+            },
+            "summary": {
+                "days_compared": len(items),
+                "total_positives": tot_pos,
+                "previous_total_hits": prev_hits,
+                "current_total_hits": curr_hits,
+                "previous_total_false_alarms": prev_fa,
+                "current_total_false_alarms": curr_fa,
+                "false_alarm_reduction_pct": fa_reduction_pct,
+            },
+            "items": items,
+        }
 
     def get_comparison_geojson(
         self,

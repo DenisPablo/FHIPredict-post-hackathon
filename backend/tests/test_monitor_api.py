@@ -139,3 +139,55 @@ def test_monitor_run_ingests_and_evaluates(tmp_path: Path, monkeypatch):
         assert st["last_error"] is None
         assert st["last_result"]["ingested_rows"] == 1
         assert "2026-11-18" in st["last_result"]["evaluated_dates"]
+
+
+def test_monitor_threshold_comparison_endpoint(tmp_path: Path, monkeypatch):
+    settings = Settings(
+        monitor_dir=tmp_path / "monitor_data",
+        enable_monitor_snapshots=True,
+        enable_spread=False,
+        firms_map_key="",
+    )
+    app = main_module.create_app()
+
+    with TestClient(app) as client:
+        assert main_module._service is not None
+        baseline = main_module._service.baseline
+        monitor = MonitorService(
+            settings=settings,
+            baseline=baseline,
+            static_risk_cutoffs=main_module._service.predictor.risk_cutoffs,
+        )
+        monkeypatch.setattr(main_module, "_monitor", monitor)
+
+        n_cells = 500
+        cids = baseline.cell_id[:n_cells]
+        day_probs = (1e-5 + 0.008 * (np.linspace(0.0, 1.0, n_cells) ** 30)).astype(np.float32)
+        monitor.snap_store.save_snapshot_24h(
+            issued_date="2026-11-22",
+            target_date="2026-11-22",
+            generated_at="2026-11-22T12:00:00+00:00",
+            model_version="lgbm-risk-24h-v2",
+            cell_ids=cids,
+            probs_24h=day_probs,
+            risk_categories=np.full(n_cells, "Bajo"),
+        )
+        monitor.viirs_store.save_daily_detections(
+            source="VIIRS_SNPP_NRT",
+            acq_dates=np.array(["2026-11-22"]),
+            cell_ids=np.array([cids[-1]], dtype=np.int32),
+            detections_count=np.array([2], dtype=np.int32),
+            frp_sum=np.array([25.0], dtype=np.float32),
+            frp_max=np.array([15.0], dtype=np.float32),
+        )
+        monitor.evaluate_date(target_date="2026-11-22", issued_date="2026-11-22")
+
+        resp = client.get("/api/v1/monitor/threshold-comparison?limit=14")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["items"]) == 1
+        item = body["items"][0]
+        assert item["previous"]["false_alarms_count"] > item["current"]["false_alarms_count"]
+        assert item["current"]["hits_count"] == 1
+        assert body["summary"]["false_alarm_reduction_pct"] > 0
+

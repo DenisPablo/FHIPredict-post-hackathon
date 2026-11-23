@@ -41,6 +41,54 @@ export interface MonitorStatus {
   last_error: string | null;
 }
 
+export interface ThresholdProfileDayStats {
+  alerts_count: number;
+  hits_count: number;
+  misses_count: number;
+  false_alarms_count: number;
+  capture_rate: number | null;
+  precision: number | null;
+  cutoffs: Record<'Extremo' | 'Alto' | 'Moderado', number>;
+}
+
+export interface ThresholdComparisonItem {
+  target_date: string;
+  issued_date: string;
+  n_positives: number;
+  previous: ThresholdProfileDayStats;
+  current: ThresholdProfileDayStats;
+}
+
+export interface ThresholdComparisonSummary {
+  days_compared: number;
+  total_positives: number;
+  previous_total_hits: number;
+  current_total_hits: number;
+  previous_total_false_alarms: number;
+  current_total_false_alarms: number;
+  false_alarm_reduction_pct: number | null;
+}
+
+export interface ThresholdComparisonResponse {
+  profiles: {
+    previous: Record<string, string | number>;
+    current: Record<string, string | number>;
+  };
+  summary: ThresholdComparisonSummary;
+  items: ThresholdComparisonItem[];
+}
+
+export async function fetchThresholdComparison(
+  limit = 14,
+  signal?: AbortSignal,
+): Promise<ThresholdComparisonResponse> {
+  const res = await fetch(`/api/v1/monitor/threshold-comparison?limit=${limit}`, { signal });
+  if (!res.ok) {
+    throw new Error((await res.text()) || `API error (${res.status})`);
+  }
+  return res.json() as Promise<ThresholdComparisonResponse>;
+}
+
 export async function fetchMonitorMetrics(
   limit = 30,
   signal?: AbortSignal,

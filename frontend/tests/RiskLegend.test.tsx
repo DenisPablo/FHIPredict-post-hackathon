@@ -19,17 +19,17 @@ describe('RiskLegend', () => {
         lang="es"
         cutoffs={{
           mode: 'daily_percentile',
-          Extremo: 0.010208,
-          Alto: 0.002737,
-          Moderado: 0.001113,
+          Extremo: 0.015,
+          Alto: 0.005,
+          Moderado: 0.002,
         }}
       />,
     );
 
-    expect(screen.getByText('≥ 1.02%')).toBeTruthy();
-    expect(screen.getByText('0.27 – 1.02%')).toBeTruthy();
-    expect(screen.getByText('0.11 – 0.27%')).toBeTruthy();
-    expect(screen.getByText('< 0.11%')).toBeTruthy();
-    expect(screen.getByText('Umbral por percentil diario (top 5% / 1% / 0.1%)')).toBeTruthy();
+    expect(screen.getByText('≥ 1.50%')).toBeTruthy();
+    expect(screen.getByText('0.50 – 1.50%')).toBeTruthy();
+    expect(screen.getByText('0.20 – 0.50%')).toBeTruthy();
+    expect(screen.getByText('< 0.20%')).toBeTruthy();
+    expect(screen.getByText('Umbral por percentil diario (top 1% / 0.3% / 0.05%)')).toBeTruthy();
   });
 });

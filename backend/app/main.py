@@ -25,7 +25,11 @@ async def lifespan(app: FastAPI):
     global _service, _monitor
     settings = get_settings()
     _service = ForecastService(settings)
-    _monitor = MonitorService(settings, _service.baseline)
+    _monitor = MonitorService(
+        settings,
+        _service.baseline,
+        static_risk_cutoffs=_service.predictor.risk_cutoffs,
+    )
     warmup_task = asyncio.create_task(_service.warm_up())
     refresh_task = asyncio.create_task(_service.run_periodic_refresh())
     monitor_task = asyncio.create_task(_monitor.run_periodic_monitor())
@@ -149,6 +153,11 @@ def create_app() -> FastAPI:
         assert _monitor is not None
         items = await asyncio.to_thread(_monitor.list_metrics, limit=limit)
         return {"items": items}
+
+    @app.get("/api/v1/monitor/threshold-comparison")
+    async def monitor_threshold_comparison(limit: int = Query(default=14, ge=1, le=90)):
+        assert _monitor is not None
+        return await asyncio.to_thread(_monitor.compare_threshold_profiles, limit=limit)
 
     @app.get("/api/v1/monitor/comparison")
     async def monitor_comparison(
