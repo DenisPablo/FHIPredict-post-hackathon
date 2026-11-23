@@ -1,0 +1,54 @@
+name: FHIPredict
+schema: spec-driven
+repository: https://github.com/DenisPablo/FHIPredict-post-hackathon
+default_branch: main
+language: en
+
+context: |
+  FHIPredict is a standalone wildfire risk prediction (1-15 days), spatial neighbor
+  propagation (24h-72h), and empirical NASA FIRMS VIIRS validation platform for Argentina,
+  scoring 64,653 5x5 km cells mapped to 971 Open-Meteo climate grid nodes.
+
+  Runtime and hardware constraints:
+  - Target production host (DonWeb1 VPS) operates under a strict 1 GB RAM + swap budget
+    running natively via systemd (`fhipredict.service`); containerized CI/CD targets an
+    850 MB memory cap (`--memory="850m"`).
+  - Dual LightGBM bundles:
+    * `lgbm-risk-24h-v2` (`backend/models/fire_risk_bundle.joblib`, 20 features)
+    * `lgbm-spread-v2` (`backend/models/spread_bundle.joblib`, 47 features)
+    both executed over `backend/models/cell_baseline.parquet`.
+  - DuckDB monitor stores (`monitor.duckdb`) enforce `memory_limit="256MB"` and `threads=1`.
+  - Open-Meteo forecast client defaults to `chunk_size=100` and `max_concurrency=1` to fit
+    the memory budget and prevent HTTP 429 rate-limiting.
+  - Current automated test baseline: 33 backend pytest tests (7 files) and 9 frontend
+    Vitest tests (5 files).
+
+  Multi-machine Git SDD workflow rules:
+  1. Start every session on any workstation with `git pull --ff-only origin main` (on
+     DonWeb1 production, back up and restore `backend/models/.forecast_cache.joblib`
+     around git pulls).
+  2. Read the relevant `openspec/specs/<domain>/spec.md` file(s) before proposing or
+     editing code.
+  3. For non-trivial changes, author a change folder under `openspec/changes/<name>/`
+     (`proposal.md`, delta `specs/<domain>/spec.md`, `tasks.md`) before coding; for small
+     bounded changes, update the target `openspec/specs/<domain>/spec.md` alongside code.
+  4. Implement code + tests and run full verification (`pytest -q`, `npm run typecheck`,
+     `npm test`, `npm run build`).
+  5. Merge finalized requirements and `GIVEN`/`WHEN`/`THEN` scenarios into
+     `openspec/specs/<domain>/spec.md` and remove temporary change directories before
+     committing (retaining `openspec/changes/.gitkeep`).
+  6. Never commit secrets, API keys, `.env`, or `monitor.duckdb` files to Git.
+
+domains:
+  - fire-risk-forecast
+  - spatial-spread
+  - viirs-monitor
+  - frontend-ui
+  - deployment
+
+rules:
+  specs:
+    - Write all specification prose in clear, neutral, professional English.
+    - Use RFC 2119 keywords (`MUST`, `SHALL`, `SHOULD`, `MAY`) for normative requirements.
+    - Back every requirement with concrete `#### Scenario:` blocks using `GIVEN` / `WHEN` / `THEN`.
+    - Keep endpoint contracts, configuration env vars, and test expectations synchronized with code.
