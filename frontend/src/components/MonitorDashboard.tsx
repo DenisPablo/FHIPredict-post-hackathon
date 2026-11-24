@@ -837,6 +837,14 @@ function ThresholdComparisonChart({
                   : `Moderate Watch: +${summary.current_total_watch_hits} fires (total ${summary.current_total_combined_hits}/${summary.total_positives})`}
               </span>
             )}
+          {summary.current_operational_precision_pct !== undefined &&
+            summary.current_operational_precision_pct !== null && (
+              <span className="rounded-full border border-[#A855F7]/35 bg-[#A855F7]/10 px-2.5 py-0.5 font-mono text-[11px] text-[#C084FC]">
+                {isEs
+                  ? `Prec. operativa ≤12 km: ${summary.current_operational_precision_pct.toFixed(1)}% (+${summary.current_total_near_hits ?? 0})`
+                  : `Op. precision ≤12 km: ${summary.current_operational_precision_pct.toFixed(1)}% (+${summary.current_total_near_hits ?? 0})`}
+              </span>
+            )}
           <div className="inline-flex rounded-lg border border-space-border bg-space-elevated p-0.5 font-mono text-[11px]">
             <button
               type="button"

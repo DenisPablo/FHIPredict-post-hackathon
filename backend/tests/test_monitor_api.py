@@ -162,7 +162,7 @@ def test_monitor_threshold_comparison_endpoint(tmp_path: Path, monkeypatch):
 
         n_cells = 500
         cids = baseline.cell_id[:n_cells]
-        day_probs = (1e-5 + 0.008 * (np.linspace(0.0, 1.0, n_cells) ** 30)).astype(np.float32)
+        day_probs = (1e-5 + 0.016 * (np.linspace(0.0, 1.0, n_cells) ** 30)).astype(np.float32)
         monitor.snap_store.save_snapshot_24h(
             issued_date="2026-11-22",
             target_date="2026-11-22",

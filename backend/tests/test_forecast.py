@@ -29,7 +29,7 @@ def test_rolling_weather_features():
 def test_bundle_loads_and_predicts():
     models_dir = Path(__file__).resolve().parents[1] / "models"
     predictor = FireRiskPredictor.from_bundle(models_dir / "fire_risk_bundle.joblib")
-    assert predictor.model_version == "lgbm-risk-24h-v3"
+    assert predictor.model_version == "lgbm-risk-24h-v4"
     X = np.zeros((4, len(predictor.feature_columns)), dtype=np.float32)
     probs = predictor.predict_probabilities(X)
     assert probs.shape == (4,)
@@ -197,15 +197,15 @@ def test_daily_percentile_cutoffs_adapt_underestimated_distribution():
     probs = np.concatenate(
         [
             np.linspace(1e-5, 0.0015, 9750),
-            np.linspace(0.00151, 0.005, 190),
-            np.linspace(0.0051, 0.02, 52),
+            np.linspace(0.00151, 0.013, 210),
+            np.linspace(0.0131, 0.02, 32),
             np.linspace(0.0201, 0.04, 8),
         ]
     ).astype(np.float32)
 
     cutoffs = predictor.compute_daily_percentile_cutoffs(probs)
     assert 0.015 <= cutoffs["Extremo"] < predictor.risk_cutoffs["Extremo"]
-    assert 0.005 <= cutoffs["Alto"] < predictor.risk_cutoffs["Alto"]
+    assert 0.013 <= cutoffs["Alto"] <= predictor.risk_cutoffs["Alto"]
     assert 0.0005 <= cutoffs["Moderado"] < predictor.risk_cutoffs["Moderado"]
     assert cutoffs["Extremo"] >= cutoffs["Alto"] >= cutoffs["Moderado"]
 
@@ -232,13 +232,13 @@ def test_daily_percentile_cutoffs_guards():
     # Near-zero rainy day: quantiles fall below safety floors -> clamped at floors, zero alerts
     rainy = np.linspace(1e-7, 5e-5, 10_000, dtype=np.float32)
     rainy_cutoffs = predictor.compute_daily_percentile_cutoffs(rainy)
-    assert rainy_cutoffs == {"Extremo": 0.015, "Alto": 0.005, "Moderado": 0.0005}
+    assert rainy_cutoffs == {"Extremo": 0.015, "Alto": 0.013, "Moderado": 0.0005}
     assert np.all(predictor.categorize(rainy, cutoffs=rainy_cutoffs) == "Bajo")
 
     # Quiet low-risk day (< 0.04%): quantiles fall below two-tier safety floors -> zero alerts
     quiet = np.linspace(1e-5, 0.0004, 10_000, dtype=np.float32)
     quiet_cutoffs = predictor.compute_daily_percentile_cutoffs(quiet)
-    assert quiet_cutoffs == {"Extremo": 0.015, "Alto": 0.005, "Moderado": 0.0005}
+    assert quiet_cutoffs == {"Extremo": 0.015, "Alto": 0.013, "Moderado": 0.0005}
     assert np.all(predictor.categorize(quiet, cutoffs=quiet_cutoffs) == "Bajo")
 
     # Constant or too-small arrays -> fall back to static cutoffs
@@ -268,7 +268,7 @@ def test_query_geojson_and_snapshot_use_daily_percentile_cutoffs(tmp_path: Path)
     dates = ["2026-11-18", "2026-11-19", "2026-11-20"]
 
     idx = np.linspace(0.0, 1.0, n_cells, dtype=np.float64)
-    day_probs = (1e-5 + 0.018 * (idx**140)).astype(np.float32)
+    day_probs = (1e-5 + 0.021 * (idx**110)).astype(np.float32)
     probs = np.repeat(day_probs[:, None], n_days, axis=1)
     stability = np.full((n_cells, n_days), 0.9, dtype=np.float16)
     zeros_gd = np.zeros((n_grid, n_days), dtype=np.float32)

@@ -310,6 +310,7 @@ class ViirsStore:
             "focos_7d": np.empty(0, dtype=np.float32),
             "focos_30d": np.empty(0, dtype=np.float32),
             "frp_7d": np.empty(0, dtype=np.float32),
+            "frp_30d": np.empty(0, dtype=np.float32),
             "days_since_pos": np.empty(0, dtype=np.float32),
         }
         if not self.db_path.exists():
@@ -352,6 +353,7 @@ class ViirsStore:
                     CAST(COALESCE(SUM(CASE WHEN acq_date >= CAST(? AS DATE) - INTERVAL 6 DAY THEN det ELSE 0 END), 0) AS FLOAT) AS focos_7d,
                     CAST(COALESCE(SUM(det), 0) AS FLOAT) AS focos_30d,
                     CAST(COALESCE(SUM(CASE WHEN acq_date >= CAST(? AS DATE) - INTERVAL 6 DAY THEN frp ELSE 0 END), 0) AS FLOAT) AS frp_7d,
+                    CAST(COALESCE(SUM(frp), 0) AS FLOAT) AS frp_30d,
                     CAST(COALESCE(
                         DATEDIFF(
                             'day',

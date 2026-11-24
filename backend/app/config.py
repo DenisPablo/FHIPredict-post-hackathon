@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     risk_top_frac_alto: float = Field(default=0.004, gt=0.0, lt=0.5)
     risk_top_frac_moderado: float = Field(default=0.025, gt=0.0, lt=0.5)
     risk_floor_extremo: float = Field(default=0.015, ge=0.0, le=1.0)
-    risk_floor_alto: float = Field(default=0.005, ge=0.0, le=1.0)
+    risk_floor_alto: float = Field(default=0.013, ge=0.0, le=1.0)
     risk_floor_moderado: float = Field(default=0.0005, ge=0.0, le=1.0)
 
 

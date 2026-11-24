@@ -78,6 +78,7 @@ class FireMemoryState:
     focos_30d: np.ndarray
     frp_7d: np.ndarray
     anios_desde_ultimo_fuego: np.ndarray
+    frp_30d: np.ndarray | None = None
 
 
 def load_baseline(parquet_path: str) -> CellBaseline:
@@ -369,17 +370,18 @@ class ForecastService:
         f7 = b.focos_ultimos_7d.copy()
         f30 = b.focos_ultimos_30d.copy()
         frp7 = b.frp_ultimos_7d.copy()
+        frp30 = (b.frp_ultimos_7d * (30.0 / 7.0)).astype(np.float32)
         anios = b.anios_desde_ultimo_fuego.copy()
 
         try:
             viirs = self._viirs_store.load_rolling_fire_memory(ref_date)
         except Exception as exc:
             logger.warning("Failed to query live VIIRS fire memory (%s); using baseline", exc)
-            return FireMemoryState(f1, f2, frp1, f7, f30, frp7, anios)
+            return FireMemoryState(f1, f2, frp1, f7, f30, frp7, anios, frp30)
 
         cov30 = int(viirs.get("covered_days_30d", 0))
         if cov30 == 0:
-            return FireMemoryState(f1, f2, frp1, f7, f30, frp7, anios)
+            return FireMemoryState(f1, f2, frp1, f7, f30, frp7, anios, frp30)
 
         w1 = min(1.0, float(viirs.get("covered_days_1d", 0)) / 1.0)
         w2 = min(1.0, float(viirs.get("covered_days_2d", 0)) / 2.0)
@@ -392,9 +394,11 @@ class ForecastService:
         f7 = (f7 * (1.0 - w7)).astype(np.float32)
         f30 = (f30 * (1.0 - w30)).astype(np.float32)
         frp7 = (frp7 * (1.0 - w7)).astype(np.float32)
+        frp30 = (frp30 * (1.0 - w30)).astype(np.float32)
 
         idx_map = self._get_cell_idx_map()
-        for cid, v_f1, v_f2, v_frp1, v_f7, v_f30, v_frp7, v_days in zip(
+        v_frp30_arr = viirs.get("frp_30d", viirs["frp_7d"])
+        for cid, v_f1, v_f2, v_frp1, v_f7, v_f30, v_frp7, v_frp30, v_days in zip(
             viirs["cell_id"].tolist(),
             viirs["focos_1d"].tolist(),
             viirs["focos_2d"].tolist(),
@@ -402,6 +406,7 @@ class ForecastService:
             viirs["focos_7d"].tolist(),
             viirs["focos_30d"].tolist(),
             viirs["frp_7d"].tolist(),
+            v_frp30_arr.tolist(),
             viirs["days_since_pos"].tolist(),
         ):
             pos = idx_map.get(int(cid))
@@ -413,10 +418,11 @@ class ForecastService:
             f7[pos] += float(v_f7)
             f30[pos] += float(v_f30)
             frp7[pos] += float(v_frp7)
+            frp30[pos] += float(v_frp30)
             if float(v_days) > 0.0:
                 anios[pos] = min(float(anios[pos]), float(v_days) / 365.25)
 
-        return FireMemoryState(f1, f2, frp1, f7, f30, frp7, anios)
+        return FireMemoryState(f1, f2, frp1, f7, f30, frp7, anios, frp30)
 
     @staticmethod
     def _decay_fire_memory_for_horizon(mem: FireMemoryState, day_idx: int) -> FireMemoryState:
@@ -428,6 +434,7 @@ class ForecastService:
         a2 = max(0.0, (2.0 - d) / 2.0)
         a7 = max(0.0, (7.0 - d) / 7.0)
         a30 = max(0.0, (30.0 - d) / 30.0)
+        frp30_base = mem.frp_30d if mem.frp_30d is not None else mem.frp_7d
         return FireMemoryState(
             focos_1d=(mem.focos_1d * a1).astype(np.float32),
             focos_2d=(mem.focos_2d * a2).astype(np.float32),
@@ -436,7 +443,19 @@ class ForecastService:
             focos_30d=(mem.focos_30d * a30).astype(np.float32),
             frp_7d=(mem.frp_7d * a7).astype(np.float32),
             anios_desde_ultimo_fuego=(mem.anios_desde_ultimo_fuego + (d / 365.25)).astype(np.float32),
+            frp_30d=(frp30_base * a30).astype(np.float32),
         )
+
+    def _get_neighbor_edges_12km(self) -> tuple[np.ndarray, np.ndarray]:
+        """Lazily build directed `(src_idx, dst_idx)` neighbor edges within `<= 12 km`."""
+        cached = getattr(self, "_neighbor_edges_12km", None)
+        if cached is not None:
+            return cached
+        b = self.baseline
+        g = build_neighbor_graph(b.cell_id, b.lat_centro, b.lon_centro, b.elevacion_m, max_dist_km=12.0)
+        edges = (g.src_idx, g.dst_idx)
+        self._neighbor_edges_12km = edges
+        return edges
 
     def _score_all_days(self, weather: WeatherGridForecast) -> tuple[np.ndarray, np.ndarray]:
         b = self.baseline
@@ -446,6 +465,8 @@ class ForecastService:
         stability = np.empty((n_cells, n_days), dtype=np.float16)
         g_idx = b.cell_to_grid
         base_mem = self._resolve_fire_memory(weather.dates[0]) if n_days > 0 else None
+        needs_nbr = "focos_vecinos_1d" in self.predictor.feature_columns
+        nbr_edges = self._get_neighbor_edges_12km() if needs_nbr else None
 
         for d_idx, date_str in enumerate(weather.dates):
             dt = datetime.strptime(date_str, "%Y-%m-%d")
@@ -455,6 +476,16 @@ class ForecastService:
             mem_d = self._decay_fire_memory_for_horizon(base_mem, d_idx)
 
             zeros_c = np.zeros(n_cells, dtype=np.float32)
+            frp30_d = mem_d.frp_30d if mem_d.frp_30d is not None else mem_d.frp_7d
+            dias_reciente = np.minimum(31.0, mem_d.anios_desde_ultimo_fuego * 365.25).astype(np.float32)
+            ratio_1d_7d = (mem_d.focos_1d / (mem_d.focos_7d + 1.0)).astype(np.float32)
+            if nbr_edges is not None:
+                focos_vec_1d = np.zeros(n_cells, dtype=np.float32)
+                src_e, dst_e = nbr_edges
+                np.add.at(focos_vec_1d, dst_e, mem_d.focos_1d[src_e])
+            else:
+                focos_vec_1d = zeros_c
+
             feature_map = {
                 "lat_centro": b.lat_centro,
                 "lon_centro": b.lon_centro,
@@ -465,6 +496,10 @@ class ForecastService:
                 "focos_ultimos_7d": mem_d.focos_7d,
                 "focos_ultimos_30d": mem_d.focos_30d,
                 "frp_ultimos_7d": mem_d.frp_7d,
+                "frp_ultimos_30d": frp30_d,
+                "dias_desde_foco_reciente": dias_reciente,
+                "ratio_actividad_1d_7d": ratio_1d_7d,
+                "focos_vecinos_1d": focos_vec_1d,
                 "mediana_historica_mes": b.clim_months[:, dt.month - 1],
                 "anios_desde_ultimo_fuego": mem_d.anios_desde_ultimo_fuego,
                 "elevacion_m": b.elevacion_m,

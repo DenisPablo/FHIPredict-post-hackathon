@@ -20,7 +20,7 @@ def test_both_model_bundles_load_and_produce_calibrated_probabilities():
     v2 = FireRiskPredictor.from_bundle(MODELS_DIR / "fire_risk_bundle.joblib")
     spread = SpreadPredictor.from_bundle(MODELS_DIR / "spread_bundle.joblib")
 
-    assert v2.model_version == "lgbm-risk-24h-v3"
+    assert v2.model_version == "lgbm-risk-24h-v4"
     assert spread.model_version == "lgbm-spread-v2"
     assert spread.feature_columns == SPREAD_FEATURE_COLUMNS
 
@@ -153,7 +153,7 @@ def test_health_and_spread_api_endpoints():
         h_resp = client.get("/api/v1/health")
         assert h_resp.status_code == 200
         h_body = h_resp.json()
-        assert h_body["model_version"] == "lgbm-risk-24h-v3"
+        assert h_body["model_version"] == "lgbm-risk-24h-v4"
         assert h_body["spread_model_version"] == "lgbm-spread-v2"
 
         for horizon in (24, 48, 72):

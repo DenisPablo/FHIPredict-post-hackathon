@@ -15,12 +15,12 @@ Primary implementation files:
 ## Requirements
 
 ### Requirement FRF-1: Model Bundle & Baseline Loading
-`ForecastService` SHALL load `fire_risk_bundle.joblib` (`lgbm-risk-24h-v3`, 26 features including `et0_approx`, `balance_hidrico_15d/30d`, `vpd_mean_7d`, and `focos_ultimos_1d/2d`, `logit_offset=-4.8283137373023015`, static validation cutoffs `Extremo=0.05709182`, `Alto=0.01318587`, `Moderado=0.00364646`) and `cell_baseline.parquet` (`64,653` 5×5 km cells ordered by `cell_id`, mapped to `971` unique rounded `(lat_clima, lon_clima)` grid coordinates).
+`ForecastService` SHALL load `fire_risk_bundle.joblib` (`lgbm-risk-24h-v4`, 30 features including `et0_approx`, `balance_hidrico_15d/30d`, `vpd_mean_7d`, `focos_ultimos_1d/2d`, `frp_ultimos_30d`, `dias_desde_foco_reciente`, `ratio_actividad_1d_7d`, and `focos_vecinos_1d`, `logit_offset=-4.8283137373023015`, static validation cutoffs `Extremo=0.06013016`, `Alto=0.01380607`, `Moderado=0.00346883`) and `cell_baseline.parquet` (`64,653` 5×5 km cells ordered by `cell_id`, mapped to `971` unique rounded `(lat_clima, lon_clima)` grid coordinates).
 
 #### Scenario: Health check reports loaded baseline and model metadata
 - **GIVEN** the FastAPI application has completed lifespan startup with valid model files
 - **WHEN** a client sends `GET /api/v1/health`
-- **THEN** the server MUST return HTTP `200` with `status="ok"`, `model_version="lgbm-risk-24h-v3"`, `cells_total=64653`, `grid_points=971`, and boolean `forecast_cached`.
+- **THEN** the server MUST return HTTP `200` with `status="ok"`, `model_version="lgbm-risk-24h-v4"`, `cells_total=64653`, `grid_points=971`, and boolean `forecast_cached`.
 
 ---
 

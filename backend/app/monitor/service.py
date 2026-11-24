@@ -222,6 +222,37 @@ class MonitorService:
     def list_metrics(self, limit: int = 30) -> list[dict[str, Any]]:
         return self.eval_store.list_metrics(limit=limit)
 
+    def _count_near_hits_12km(
+        self,
+        cell_ids: np.ndarray,
+        fa_mask: np.ndarray,
+        y_true: np.ndarray,
+    ) -> int:
+        """Count false-alarm cells that had a real VIIRS fire within `<= 12 km` on the same day."""
+        if self.baseline is None or not np.any(fa_mask) or not np.any(y_true == 1):
+            return 0
+        pos_ids = set(int(c) for c in cell_ids[y_true == 1].tolist())
+        fa_ids = set(int(c) for c in cell_ids[fa_mask].tolist())
+        b = self.baseline
+        b_cids = b.cell_id.tolist()
+        pos_mask_b = np.array([int(c) in pos_ids for c in b_cids], dtype=bool)
+        fa_mask_b = np.array([int(c) in fa_ids for c in b_cids], dtype=bool)
+        if not np.any(pos_mask_b) or not np.any(fa_mask_b):
+            return 0
+        lats_p = np.radians(b.lat_centro[pos_mask_b])
+        lons_p = np.radians(b.lon_centro[pos_mask_b])
+        lats_f = np.radians(b.lat_centro[fa_mask_b])
+        lons_f = np.radians(b.lon_centro[fa_mask_b])
+        near = 0
+        for lf, lof in zip(lats_f.tolist(), lons_f.tolist()):
+            dlat = lats_p - lf
+            dlon = lons_p - lof
+            a = np.sin(dlat / 2.0) ** 2 + np.cos(lf) * np.cos(lats_p) * (np.sin(dlon / 2.0) ** 2)
+            min_km = float(np.min(6371.0 * 2.0 * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))))
+            if min_km <= 12.0:
+                near += 1
+        return near
+
     def _eval_threshold_profile(
         self,
         probs_24h: np.ndarray,
@@ -230,6 +261,7 @@ class MonitorService:
         profile: dict[str, float],
         *,
         alert_min_risk: str = "Moderado",
+        cell_ids: np.ndarray | None = None,
     ) -> dict[str, Any]:
         cutoffs = compute_daily_percentile_cutoffs(
             probs_24h,
@@ -243,22 +275,30 @@ class MonitorService:
         )
         alerts_mask = probs_24h >= cutoffs[alert_min_risk]
         watch_mask = (probs_24h >= cutoffs["Moderado"]) & (~alerts_mask)
+        fa_mask = alerts_mask & (y_true == 0)
         alerts_count = int(np.sum(alerts_mask))
         hits_count = int(np.sum(alerts_mask & (y_true == 1)))
         misses_count = int(np.sum((~alerts_mask) & (y_true == 1)))
-        false_alarms_count = int(np.sum(alerts_mask & (y_true == 0)))
+        false_alarms_count = int(np.sum(fa_mask))
+        near_hits_count = (
+            self._count_near_hits_12km(cell_ids, fa_mask, y_true)
+            if cell_ids is not None
+            else 0
+        )
         watch_cells_count = int(np.sum(watch_mask))
         watch_hits_count = int(np.sum(watch_mask & (y_true == 1)))
         return {
             "alert_min_risk": alert_min_risk,
             "alerts_count": alerts_count,
             "hits_count": hits_count,
+            "near_hits_count": near_hits_count,
             "misses_count": misses_count,
             "false_alarms_count": false_alarms_count,
             "watch_cells_count": watch_cells_count,
             "watch_hits_count": watch_hits_count,
             "capture_rate": (hits_count / n_pos) if n_pos > 0 else None,
             "precision": (hits_count / alerts_count) if alerts_count > 0 else None,
+            "operational_precision": ((hits_count + near_hits_count) / alerts_count) if alerts_count > 0 else None,
             "cutoffs": {k: round(float(v), 6) for k, v in cutoffs.items()},
         }
 
@@ -275,7 +315,7 @@ class MonitorService:
         }
 
         items: list[dict[str, Any]] = []
-        tot_pos = prev_hits = curr_hits = prev_fa = curr_fa = curr_watch_hits = 0
+        tot_pos = prev_hits = curr_hits = prev_fa = curr_fa = curr_watch_hits = curr_near_hits = curr_alerts = 0
 
         for rec in records:
             target_date = str(rec["target_date"])
@@ -305,6 +345,7 @@ class MonitorService:
                 n_pos,
                 current_profile,
                 alert_min_risk="Alto",
+                cell_ids=snap["cell_id"],
             )
 
             tot_pos += n_pos
@@ -313,6 +354,8 @@ class MonitorService:
             prev_fa += prev_stats["false_alarms_count"]
             curr_fa += curr_stats["false_alarms_count"]
             curr_watch_hits += curr_stats["watch_hits_count"]
+            curr_near_hits += curr_stats["near_hits_count"]
+            curr_alerts += curr_stats["alerts_count"]
 
             items.append(
                 {
@@ -325,6 +368,7 @@ class MonitorService:
             )
 
         fa_reduction_pct = round((1.0 - (curr_fa / prev_fa)) * 100.0, 1) if prev_fa > 0 else None
+        op_prec_pct = round(((curr_hits + curr_near_hits) / curr_alerts) * 100.0, 1) if curr_alerts > 0 else None
         return {
             "profiles": {
                 "previous": {
@@ -343,6 +387,8 @@ class MonitorService:
                 "total_positives": tot_pos,
                 "previous_total_hits": prev_hits,
                 "current_total_hits": curr_hits,
+                "current_total_near_hits": curr_near_hits,
+                "current_operational_precision_pct": op_prec_pct,
                 "current_total_watch_hits": curr_watch_hits,
                 "current_total_combined_hits": curr_hits + curr_watch_hits,
                 "previous_total_false_alarms": prev_fa,

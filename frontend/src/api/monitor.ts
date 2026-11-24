@@ -45,12 +45,14 @@ export interface ThresholdProfileDayStats {
   alert_min_risk?: string;
   alerts_count: number;
   hits_count: number;
+  near_hits_count?: number;
   misses_count: number;
   false_alarms_count: number;
   watch_cells_count?: number;
   watch_hits_count?: number;
   capture_rate: number | null;
   precision: number | null;
+  operational_precision?: number | null;
   cutoffs: Record<'Extremo' | 'Alto' | 'Moderado', number>;
 }
 
@@ -67,6 +69,8 @@ export interface ThresholdComparisonSummary {
   total_positives: number;
   previous_total_hits: number;
   current_total_hits: number;
+  current_total_near_hits?: number;
+  current_operational_precision_pct?: number | null;
   current_total_watch_hits?: number;
   current_total_combined_hits?: number;
   previous_total_false_alarms: number;

@@ -193,7 +193,7 @@ def test_spread_source_selection_aligns_with_daily_percentile_cutoffs(tmp_path: 
     n_grid = len(svc.baseline.grid_coords)
 
     idx = np.linspace(0.0, 1.0, n_cells, dtype=np.float64)
-    day_probs = (1e-5 + 0.01 * (idx**30)).astype(np.float32)  # max 0.01001 < static Alto 0.01292
+    day_probs = (1e-5 + 0.0136 * (idx**30)).astype(np.float32)  # between floor_alto (0.013) and static Alto (0.0138)
     probs = day_probs[:, None]
 
     # Clear all observed fire memory so only predicted risk can trigger sources

@@ -24,7 +24,7 @@ def compute_daily_percentile_cutoffs(
     top_frac_alto: float = 0.004,
     top_frac_moderado: float = 0.025,
     floor_extremo: float = 0.015,
-    floor_alto: float = 0.005,
+    floor_alto: float = 0.013,
     floor_moderado: float = 0.0005,
     min_samples: int = 100,
 ) -> dict[str, float]:
@@ -118,7 +118,7 @@ class FireRiskPredictor:
         top_frac_alto: float = 0.004,
         top_frac_moderado: float = 0.025,
         floor_extremo: float = 0.015,
-        floor_alto: float = 0.005,
+        floor_alto: float = 0.013,
         floor_moderado: float = 0.0005,
         min_samples: int = 100,
     ) -> dict[str, float]:

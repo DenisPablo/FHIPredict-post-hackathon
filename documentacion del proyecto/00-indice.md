@@ -36,6 +36,7 @@ Cada documento responde a una pregunta concreta y se apoya en el anterior:
 | 3 | [03-arquitectura-backend-y-monitor.md](03-arquitectura-backend-y-monitor.md) | Cómo funciona el servidor, la caché, los endpoints y el monitor empírico con DuckDB. |
 | 4 | [04-frontend-y-experiencia.md](04-frontend-y-experiencia.md) | Qué ofrece el mapa operativo, el panel `/monitor` y cómo interpretar sus gráficos. |
 | 5 | [05-operacion-despliegue-y-limites.md](05-operacion-despliegue-y-limites.md) | Cómo ejecutarlo en local, cómo está desplegado en DonWeb1 y qué limitaciones reales tiene. |
+| 6 | [06-evolucion-del-modelo-ml.md](06-evolucion-del-modelo-ml.md) | Cómo evolucionó el modelo (`v2` → `v3` → `v4`), qué problemas se resolvieron y por qué existe un límite teórico. |
 
 ---
 
