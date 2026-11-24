@@ -268,12 +268,20 @@ export function MonitorDashboard({ lang, onToggleLang, onBackToMap }: MonitorDas
             </section>
 
             {comparisonQuery.data && comparisonQuery.data.items.length > 0 && (
-              <ThresholdComparisonChart
-                data={comparisonQuery.data}
-                selectedDate={activeItem.target_date}
-                onSelectDate={setSelectedDate}
-                isEs={isEs}
-              />
+              <>
+                <ThresholdComparisonChart
+                  data={comparisonQuery.data}
+                  selectedDate={activeItem.target_date}
+                  onSelectDate={setSelectedDate}
+                  isEs={isEs}
+                />
+                <StockComparisonLineChart
+                  data={comparisonQuery.data}
+                  selectedDate={activeItem.target_date}
+                  onSelectDate={setSelectedDate}
+                  isEs={isEs}
+                />
+              </>
             )}
 
             <section className="grid gap-6 lg:grid-cols-2">
@@ -364,10 +372,11 @@ export function MonitorDashboard({ lang, onToggleLang, onBackToMap }: MonitorDas
 
 function PlainLanguageSummary({ item, isEs }: { item: MonitorMetricItem; isEs: boolean }) {
   const alertCells =
-    (item.categories?.Extremo?.cells_count ?? 0) +
-    (item.categories?.Alto?.cells_count ?? 0) +
-    (item.categories?.Moderado?.cells_count ?? 0);
+    (item.categories?.Extremo?.cells_count ?? 0) + (item.categories?.Alto?.cells_count ?? 0);
+  const watchCells = item.categories?.Moderado?.cells_count ?? 0;
+  const watchHits = item.categories?.Moderado?.positives_count ?? 0;
   const alertSharePct = item.n_cells > 0 ? ((alertCells / item.n_cells) * 100).toFixed(2) : '0.00';
+  const watchSharePct = item.n_cells > 0 ? ((watchCells / item.n_cells) * 100).toFixed(2) : '0.00';
   const capturePct = item.n_positives > 0 ? ((item.hits_count / item.n_positives) * 100).toFixed(1) : '0.0';
   const expectedPos = (item.mean_predicted_prob * item.n_cells).toFixed(1);
 
@@ -379,11 +388,18 @@ function PlainLanguageSummary({ item, isEs }: { item: MonitorMetricItem; isEs: b
             ? `Resumen en lenguaje simple (${item.target_date})`
             : `Plain-language summary (${item.target_date})`}
         </h2>
-        <span className="rounded-full border border-space-border bg-space-elevated px-2.5 py-0.5 font-mono text-[11px] text-fcText-secondary">
-          {isEs
-            ? `Territorio en alerta: ${alertCells} / ${item.n_cells.toLocaleString('es-AR')} celdas (${alertSharePct}%)`
-            : `Alerted territory: ${alertCells} / ${item.n_cells.toLocaleString('en-US')} cells (${alertSharePct}%)`}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full border border-space-border bg-space-elevated px-2.5 py-0.5 font-mono text-[11px] text-fcText-secondary">
+            {isEs
+              ? `Alerta accionable (Alto+): ${alertCells} / ${item.n_cells.toLocaleString('es-AR')} (${alertSharePct}%)`
+              : `Actionable alert (High+): ${alertCells} / ${item.n_cells.toLocaleString('en-US')} (${alertSharePct}%)`}
+          </span>
+          <span className="rounded-full border border-[#68D9D0]/30 bg-[#68D9D0]/10 px-2.5 py-0.5 font-mono text-[11px] text-[#68D9D0]">
+            {isEs
+              ? `Vigilancia (Moderado): ${watchCells} (${watchSharePct}%)`
+              : `Watch (Moderate): ${watchCells} (${watchSharePct}%)`}
+          </span>
+        </div>
       </div>
 
       <div className="mt-3 grid gap-4 md:grid-cols-2">
@@ -398,18 +414,24 @@ function PlainLanguageSummary({ item, isEs }: { item: MonitorMetricItem; isEs: b
             ) : isEs ? (
               <>
                 Se detectaron <strong className="text-fcText-primary">{item.n_positives}</strong> zonas con
-                incendio real en el país. El sistema había puesto en alerta previa al{' '}
+                incendio real en el país. La alerta accionable (Alto+) capturó el{' '}
                 <strong className="text-lime-brand">{capturePct}%</strong> ({item.hits_count} aciertos y{' '}
                 {item.misses_count} fuera de alerta) vigilando solo el{' '}
-                <strong className="text-fcText-primary">{alertSharePct}%</strong> del territorio.
+                <strong className="text-fcText-primary">{alertSharePct}%</strong> del territorio
+                {watchHits > 0
+                  ? `, más ${watchHits} foco(s) en la capa de vigilancia Moderado.`
+                  : '.'}
               </>
             ) : (
               <>
                 Satellites detected <strong className="text-fcText-primary">{item.n_positives}</strong> active
-                fire zones nationwide. Pre-issued alerts captured{' '}
+                fire zones nationwide. Actionable alerts (High+) captured{' '}
                 <strong className="text-lime-brand">{capturePct}%</strong> ({item.hits_count} hits and{' '}
                 {item.misses_count} misses) while monitoring only{' '}
-                <strong className="text-fcText-primary">{alertSharePct}%</strong> of the territory.
+                <strong className="text-fcText-primary">{alertSharePct}%</strong> of the territory
+                {watchHits > 0
+                  ? `, plus ${watchHits} fire(s) inside the Moderate watch layer.`
+                  : '.'}
               </>
             )}
           </p>
@@ -777,8 +799,8 @@ function ThresholdComparisonChart({
       className="rounded-2xl border border-space-border bg-space-surface p-4 sm:p-5"
       aria-label={
         isEs
-          ? 'Gráfico comparativo de umbrales: Anterior vs. Actual 2B'
-          : 'Threshold comparison chart: Previous vs. Current 2B'
+          ? 'Gráfico comparativo de umbrales: Anterior vs. Actual (Alerta Alto+)'
+          : 'Threshold comparison chart: Previous vs. Current (High+ Alert)'
       }
       role="img"
     >
@@ -786,13 +808,13 @@ function ThresholdComparisonChart({
         <div>
           <h2 className="font-title text-sm font-bold text-fcText-primary">
             {isEs
-              ? 'Comparación de umbrales: Anterior vs. Actual (2B)'
-              : 'Threshold comparison: Previous vs. Current (2B)'}
+              ? 'Comparación de umbrales: Anterior vs. Actual (Alerta Alto+)'
+              : 'Threshold comparison: Previous vs. Current (High+ Alert)'}
           </h2>
           <p className="mt-0.5 text-xs text-fcText-secondary">
             {isEs
-              ? 'Compara el perfil anterior (0.1% / 1% / 5%) contra el ajuste selectivo actual (0.05% / 0.3% / 1%) sobre cada snapshot diario.'
-              : 'Compares the previous profile (0.1% / 1% / 5%) against current selective bounds (0.05% / 0.3% / 1%) on each daily snapshot.'}
+              ? 'Compara el perfil anterior (Moderado+ 0.1% / 1% / 5%) contra la alerta accionable actual (Alto+ 0.05% / 0.4%); Moderado (2.5%) queda solo como vigilancia visual.'
+              : 'Compares the previous profile (Moderate+ 0.1% / 1% / 5%) against current actionable alerts (High+ 0.05% / 0.4%); Moderate (2.5%) stays as visual watch only.'}
           </p>
         </div>
 
@@ -807,6 +829,14 @@ function ThresholdComparisonChart({
               ? `Aciertos: ${summary.previous_total_hits}/${summary.total_positives} → ${summary.current_total_hits}/${summary.total_positives}`
               : `Hits: ${summary.previous_total_hits}/${summary.total_positives} → ${summary.current_total_hits}/${summary.total_positives}`}
           </span>
+          {summary.current_total_watch_hits !== undefined &&
+            summary.current_total_combined_hits !== undefined && (
+              <span className="rounded-full border border-[#68D9D0]/30 bg-[#68D9D0]/10 px-2.5 py-0.5 font-mono text-[11px] text-[#68D9D0]">
+                {isEs
+                  ? `Vigilancia Moderado: +${summary.current_total_watch_hits} focos (total ${summary.current_total_combined_hits}/${summary.total_positives})`
+                  : `Moderate Watch: +${summary.current_total_watch_hits} fires (total ${summary.current_total_combined_hits}/${summary.total_positives})`}
+              </span>
+            )}
           <div className="inline-flex rounded-lg border border-space-border bg-space-elevated p-0.5 font-mono text-[11px]">
             <button
               type="button"
@@ -837,11 +867,11 @@ function ThresholdComparisonChart({
       <div className="mt-4 flex flex-wrap items-center gap-4 font-mono text-[11px] text-fcText-secondary">
         <span className="inline-flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-sm bg-[#FF9C55]/85" />
-          {isEs ? 'Anterior (0.1% / 1% / 5%)' : 'Previous (0.1% / 1% / 5%)'}
+          {isEs ? 'Anterior (Moderado+ 0.1% / 1% / 5%)' : 'Previous (Moderate+ 0.1% / 1% / 5%)'}
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-sm bg-lime-brand" />
-          {isEs ? 'Actual 2B (0.05% / 0.3% / 1%)' : 'Current 2B (0.05% / 0.3% / 1%)'}
+          {isEs ? 'Actual (Alerta Alto+ 0.05% / 0.4%)' : 'Current (High+ Alert 0.05% / 0.4%)'}
         </span>
       </div>
 
@@ -886,6 +916,273 @@ function ThresholdComparisonChart({
             </button>
           );
         })}
+      </div>
+    </section>
+  );
+}
+
+function StockComparisonLineChart({
+  data,
+  selectedDate,
+  onSelectDate,
+  isEs,
+}: {
+  data: ThresholdComparisonResponse;
+  selectedDate: string;
+  onSelectDate: (date: string) => void;
+  isEs: boolean;
+}) {
+  const [mode, setMode] = useState<'hits' | 'alerts_log'>('hits');
+  const [hoveredDate, setHoveredDate] = useState<string | null>(null);
+
+  const ordered = [...data.items].reverse();
+  const focusDate = hoveredDate ?? selectedDate;
+  const focusedItem = ordered.find((d) => d.target_date === focusDate) ?? ordered[ordered.length - 1];
+
+  const width = 720;
+  const height = 230;
+  const padLeft = 48;
+  const padRight = 20;
+  const padTop = 16;
+  const padBottom = 30;
+  const plotW = width - padLeft - padRight;
+  const plotH = height - padTop - padBottom;
+
+  const getSeries = (d: ThresholdComparisonResponse['items'][number]) =>
+    mode === 'hits'
+      ? { viirs: d.n_positives, prev: d.previous.hits_count, curr: d.current.hits_count }
+      : { viirs: d.n_positives, prev: d.previous.alerts_count, curr: d.current.alerts_count };
+
+  const allVals = ordered.flatMap((d) => {
+    const s = getSeries(d);
+    return [s.viirs, s.prev, s.curr];
+  });
+  const rawMax = Math.max(1, ...allVals);
+  const maxY = mode === 'hits' ? Math.max(4, rawMax) : Math.max(100, rawMax);
+
+  const xAt = (i: number) =>
+    ordered.length <= 1 ? padLeft + plotW / 2 : padLeft + (i / (ordered.length - 1)) * plotW;
+
+  const yAt = (v: number) => {
+    const ratio =
+      mode === 'hits'
+        ? Math.max(0, v) / maxY
+        : Math.log10(Math.max(0, v) + 1) / Math.log10(maxY + 1);
+    return padTop + plotH * (1 - Math.min(1, ratio));
+  };
+
+  const yTicks =
+    mode === 'hits'
+      ? [0, Math.round(maxY / 3), Math.round((2 * maxY) / 3), maxY].filter(
+          (v, i, arr) => arr.indexOf(v) === i,
+        )
+      : [0, 10, 100, 1000, 3500].filter((v) => v <= maxY * 1.15);
+
+  const buildPolyline = (pick: (d: ThresholdComparisonResponse['items'][number]) => number) =>
+    ordered.map((d, i) => `${xAt(i).toFixed(1)},${yAt(pick(d)).toFixed(1)}`).join(' ');
+
+  const viirsPoints = buildPolyline((d) => getSeries(d).viirs);
+  const prevPoints = buildPolyline((d) => getSeries(d).prev);
+  const currPoints = buildPolyline((d) => getSeries(d).curr);
+
+  const viirsArea =
+    ordered.length > 1
+      ? `${xAt(0).toFixed(1)},${(padTop + plotH).toFixed(1)} ${viirsPoints} ${xAt(ordered.length - 1).toFixed(1)},${(padTop + plotH).toFixed(1)}`
+      : '';
+
+  const focusedIdx = Math.max(
+    0,
+    ordered.findIndex((d) => d.target_date === focusedItem.target_date),
+  );
+  const focusedSeries = getSeries(focusedItem);
+
+  return (
+    <section
+      className="rounded-2xl border border-space-border bg-space-surface p-4 sm:p-5"
+      aria-label={
+        isEs
+          ? 'Gráfico lineal comparativo: VIIRS real vs. modelo previo y actual (Alerta Alto+)'
+          : 'Comparative line chart: Real VIIRS vs. previous and current (High+ Alert)'
+      }
+      role="img"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-title text-sm font-bold text-fcText-primary">
+            {isEs
+              ? 'Serie temporal: VIIRS real vs. Modelo previo y Actual (Alerta Alto+)'
+              : 'Time series: Real VIIRS vs. Previous and Current (High+ Alert)'}
+          </h2>
+          <p className="mt-0.5 text-xs text-fcText-secondary">
+            {isEs
+              ? 'Seguimiento diario estilo acciones entre incendios reales (VIIRS), modelo previo y alerta accionable actual (Alto+).'
+              : 'Stock-style daily tracking across real fires (VIIRS), previous profile, and current actionable alerts (High+).'}
+          </p>
+        </div>
+
+        <div className="inline-flex rounded-lg border border-space-border bg-space-elevated p-0.5 font-mono text-[11px]">
+          <button
+            type="button"
+            onClick={() => setMode('hits')}
+            className={`rounded-md px-2.5 py-1 transition ${
+              mode === 'hits'
+                ? 'bg-space-surface text-fcText-primary shadow-sm'
+                : 'text-fcText-secondary hover:text-fcText-primary'
+            }`}
+          >
+            {isEs ? 'Aciertos vs. VIIRS' : 'Hits vs. VIIRS'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('alerts_log')}
+            className={`rounded-md px-2.5 py-1 transition ${
+              mode === 'alerts_log'
+                ? 'bg-space-surface text-fcText-primary shadow-sm'
+                : 'text-fcText-secondary hover:text-fcText-primary'
+            }`}
+          >
+            {isEs ? 'Alertas vs. VIIRS (log)' : 'Alerts vs. VIIRS (log)'}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-space-border/70 bg-space-elevated/40 px-3 py-2 font-mono text-xs">
+        <div className="flex flex-wrap items-center gap-4">
+          <span className="font-semibold text-fcText-primary">{focusedItem.target_date}</span>
+          <span className="inline-flex items-center gap-1.5 text-[#C084FC]">
+            <span className="h-2 w-2 rounded-full bg-[#A855F7]" />
+            {isEs ? 'VIIRS real' : 'Real VIIRS'}: <strong>{focusedSeries.viirs}</strong>
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-[#FF6759]">
+            <span className="h-2 w-2 rounded-full bg-[#FF6759]" />
+            {isEs ? 'Modelo previo' : 'Previous model'}: <strong>{focusedSeries.prev}</strong>
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-lime-brand">
+            <span className="h-2 w-2 rounded-full bg-lime-brand" />
+            {isEs ? 'Actual (Alerta Alto+)' : 'Current (High+ Alert)'}: <strong>{focusedSeries.curr}</strong>
+            {mode === 'hits' &&
+              focusedItem.current.watch_hits_count !== undefined &&
+              focusedItem.current.watch_hits_count > 0 && (
+                <span className="text-[11px] text-[#68D9D0]">
+                  (+{focusedItem.current.watch_hits_count} {isEs ? 'vig.' : 'watch'})
+                </span>
+              )}
+          </span>
+        </div>
+        {mode === 'alerts_log' && (
+          <span className="text-[11px] text-fcText-secondary">
+            {isEs ? 'Escala logarítmica' : 'Logarithmic scale'}
+          </span>
+        )}
+      </div>
+
+      <div className="mt-3 w-full overflow-x-auto">
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="h-56 w-full min-w-[420px] select-none"
+          onMouseLeave={() => setHoveredDate(null)}
+        >
+          {yTicks.map((tick) => {
+            const y = yAt(tick);
+            return (
+              <g key={tick}>
+                <line
+                  x1={padLeft}
+                  y1={y}
+                  x2={width - padRight}
+                  y2={y}
+                  stroke="rgba(148, 163, 184, 0.16)"
+                  strokeDasharray="3 3"
+                />
+                <text
+                  x={padLeft - 8}
+                  y={y + 3}
+                  textAnchor="end"
+                  fill="#94A3B8"
+                  fontSize="10"
+                  fontFamily="monospace"
+                >
+                  {tick}
+                </text>
+              </g>
+            );
+          })}
+
+          <line
+            x1={xAt(focusedIdx)}
+            y1={padTop}
+            x2={xAt(focusedIdx)}
+            y2={padTop + plotH}
+            stroke="rgba(184, 238, 104, 0.35)"
+            strokeDasharray="4 3"
+          />
+
+          {viirsArea && <polygon points={viirsArea} fill="#A855F7" fillOpacity="0.09" />}
+
+          {ordered.length > 1 && (
+            <>
+              <polyline
+                fill="none"
+                stroke="#A855F7"
+                strokeWidth="2.5"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                points={viirsPoints}
+              />
+              <polyline
+                fill="none"
+                stroke="#FF6759"
+                strokeWidth="2.2"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                points={prevPoints}
+              />
+              <polyline
+                fill="none"
+                stroke="#B8EE68"
+                strokeWidth="2.5"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                points={currPoints}
+              />
+            </>
+          )}
+
+          {ordered.map((d, i) => {
+            const s = getSeries(d);
+            const cx = xAt(i);
+            const colW = ordered.length <= 1 ? plotW : plotW / ordered.length;
+            const isFocus = d.target_date === focusedItem.target_date;
+            return (
+              <g key={d.target_date}>
+                <circle cx={cx} cy={yAt(s.viirs)} r={isFocus ? 4.5 : 3.2} fill="#A855F7" />
+                <circle cx={cx} cy={yAt(s.prev)} r={isFocus ? 4.2 : 3} fill="#FF6759" />
+                <circle cx={cx} cy={yAt(s.curr)} r={isFocus ? 4.5 : 3.2} fill="#B8EE68" />
+                <text
+                  x={cx}
+                  y={height - 8}
+                  textAnchor="middle"
+                  fill={isFocus ? '#F8FAFC' : '#94A3B8'}
+                  fontSize="10"
+                  fontFamily="monospace"
+                  fontWeight={isFocus ? 'bold' : 'normal'}
+                >
+                  {d.target_date.slice(5)}
+                </text>
+                <rect
+                  x={cx - colW / 2}
+                  y={padTop}
+                  width={Math.max(colW, 20)}
+                  height={plotH + padBottom}
+                  fill="transparent"
+                  className="cursor-pointer"
+                  onMouseEnter={() => setHoveredDate(d.target_date)}
+                  onClick={() => onSelectDate(d.target_date)}
+                />
+              </g>
+            );
+          })}
+        </svg>
       </div>
     </section>
   );

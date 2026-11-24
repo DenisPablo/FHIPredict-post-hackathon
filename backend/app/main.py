@@ -164,7 +164,7 @@ def create_app() -> FastAPI:
         target_date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
         issued_date: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
         min_frp_mw: float = Query(default=10.0, ge=0.0),
-        min_alert_risk: Literal["Moderado", "Alto", "Extremo"] = "Moderado",
+        min_alert_risk: Literal["Moderado", "Alto", "Extremo"] = "Alto",
     ):
         assert _monitor is not None
         try:

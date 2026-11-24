@@ -35,8 +35,8 @@ Settings load from environment variables or `.env` via Pydantic `BaseSettings`.
 | Variable | Default | Purpose |
 |---|---|---|
 | `RISK_CUTOFF_MODE` | `daily_percentile` | Categorization mode for `/api/v1/forecast`, 24h snapshots, and unconfirmed `/api/v1/spread` sources (`daily_percentile` or `static`). |
-| `RISK_TOP_FRAC_EXTREMO` / `_ALTO` / `_MODERADO` | `0.0005` / `0.003` / `0.01` | Target daily top fractions (`0.05%`, `0.3%`, `1%`) in `daily_percentile` mode, capped at static bundle validation cutoffs. |
-| `RISK_FLOOR_EXTREMO` / `_ALTO` / `_MODERADO` | `0.015` / `0.005` / `0.002` | Lower probability floors (`1.5%`, `0.5%`, `0.2%`) suppressing quiet-day and rainy-day false alarms. |
+| `RISK_TOP_FRAC_EXTREMO` / `_ALTO` / `_MODERADO` | `0.0005` / `0.004` / `0.025` | Target daily top fractions (`0.05%` / `0.4%` actionable `Alto+` alerts, `2.5%` preventive `Moderado` watch) in `daily_percentile` mode, capped at static bundle validation cutoffs. |
+| `RISK_FLOOR_EXTREMO` / `_ALTO` / `_MODERADO` | `0.008` / `0.002` / `0.0005` | Lower probability floors (`0.8%`, `0.2%`, `0.05%`) balancing quiet-day false-alarm reduction with fire recall. |
 | `CONFIDENCE_HORIZON_DECAY_PER_DAY` | `0.025` | Daily decay subtracted from heuristic confidence across the `1–15d` horizon (clamped at `0.35` minimum factor). |
 | `CONFIDENCE_STALE_PENALTY` | `0.15` | Multiplicative confidence penalty when serving stale cached weather/forecasts. |
 | `CONFIDENCE_HIGH_CUTOFF` / `_MEDIUM_CUTOFF` | `75.0` / `50.0` | Percentage thresholds mapping heuristic confidence (`5–99%`) to `Alta`, `Media`, and `Baja`. |

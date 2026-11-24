@@ -35,11 +35,11 @@ class Settings(BaseSettings):
     confidence_medium_cutoff: float = Field(default=50.0, ge=0.0, le=100.0)
     risk_cutoff_mode: Literal["daily_percentile", "static"] = "daily_percentile"
     risk_top_frac_extremo: float = Field(default=0.0005, gt=0.0, lt=0.5)
-    risk_top_frac_alto: float = Field(default=0.003, gt=0.0, lt=0.5)
-    risk_top_frac_moderado: float = Field(default=0.01, gt=0.0, lt=0.5)
+    risk_top_frac_alto: float = Field(default=0.004, gt=0.0, lt=0.5)
+    risk_top_frac_moderado: float = Field(default=0.025, gt=0.0, lt=0.5)
     risk_floor_extremo: float = Field(default=0.015, ge=0.0, le=1.0)
     risk_floor_alto: float = Field(default=0.005, ge=0.0, le=1.0)
-    risk_floor_moderado: float = Field(default=0.002, ge=0.0, le=1.0)
+    risk_floor_moderado: float = Field(default=0.0005, ge=0.0, le=1.0)
 
 
 @lru_cache

@@ -130,7 +130,7 @@ def classify_cell_outcomes(
     probs: np.ndarray,
     risk_categories: np.ndarray,
     y_true: np.ndarray,
-    min_alert_risk: str = "Moderado",
+    min_alert_risk: str = "Alto",
 ) -> dict[str, np.ndarray]:
     """Return only actionable cell outcomes (`hit`, `miss`, `false_alarm`), omitting true negatives."""
     min_level = RISK_ORDER[min_alert_risk]
@@ -322,7 +322,7 @@ def evaluate_snapshot_vs_viirs(
     issued_date: str | None = None,
     min_detections: int = 1,
     min_frp_mw: float = 10.0,
-    min_alert_risk: str = "Moderado",
+    min_alert_risk: str = "Alto",
 ) -> dict[str, Any]:
     """Evaluate a persisted 24h snapshot against VIIRS detections and persist metrics."""
     iss = issued_date or target_date

@@ -29,14 +29,15 @@ export const COPY = {
     spreadBtn: 'Propagación',
     spreadSources: 'focos activos',
     legendTitle: 'Índice de riesgo (prob. 24h)',
-    legendDailyPercentileNote: 'Umbral por percentil diario (top 1% / 0.3% / 0.05%)',
+    legendDailyPercentileNote:
+      'Umbral diario: Alerta Alto+ (top 0.4% / 0.05%) · Vigilancia Moderado (top 2.5%)',
     demoBadge: 'Demo experimental',
     disclaimer:
       'Versión demo experimental. No representa verdad absoluta ni debe usarse en producción o para decisiones operativas/de emergencia. Es un índice probabilístico sobre celdas con historial ígneo (precisión ~16.5% en Extremo) sujeto a incertidumbre del pronóstico.',
     categories: {
       Extremo: 'Extremo',
       Alto: 'Alto',
-      Moderado: 'Moderado',
+      Moderado: 'Moderado (Vigilancia)',
       Bajo: 'Bajo',
     } as Record<RiskCategory, string>,
     popup: {
@@ -103,14 +104,15 @@ export const COPY = {
     spreadBtn: 'Spread',
     spreadSources: 'active sources',
     legendTitle: 'Fire risk index (24h prob.)',
-    legendDailyPercentileNote: 'Daily percentile cutoffs (top 1% / 0.3% / 0.05%)',
+    legendDailyPercentileNote:
+      'Daily cutoffs: High+ Alert (top 0.4% / 0.05%) · Moderate Watch (top 2.5%)',
     demoBadge: 'Experimental demo',
     disclaimer:
       'Experimental demo only. Not ground truth and not intended for production, operational, or emergency decisions. Probabilistic index over cells with fire history (~16.5% precision in Extreme), subject to weather forecast uncertainty.',
     categories: {
       Extremo: 'Extreme',
       Alto: 'High',
-      Moderado: 'Moderate',
+      Moderado: 'Moderate (Watch)',
       Bajo: 'Low',
     } as Record<RiskCategory, string>,
     popup: {

@@ -21,11 +21,11 @@ def compute_daily_percentile_cutoffs(
     static_cutoffs: dict[str, float],
     *,
     top_frac_extremo: float = 0.0005,
-    top_frac_alto: float = 0.003,
-    top_frac_moderado: float = 0.01,
+    top_frac_alto: float = 0.004,
+    top_frac_moderado: float = 0.025,
     floor_extremo: float = 0.015,
     floor_alto: float = 0.005,
-    floor_moderado: float = 0.002,
+    floor_moderado: float = 0.0005,
     min_samples: int = 100,
 ) -> dict[str, float]:
     """Compute bounded daily-percentile cutoffs from `reference_probs`.
@@ -115,11 +115,11 @@ class FireRiskPredictor:
         reference_probs: np.ndarray,
         *,
         top_frac_extremo: float = 0.0005,
-        top_frac_alto: float = 0.003,
-        top_frac_moderado: float = 0.01,
+        top_frac_alto: float = 0.004,
+        top_frac_moderado: float = 0.025,
         floor_extremo: float = 0.015,
         floor_alto: float = 0.005,
-        floor_moderado: float = 0.002,
+        floor_moderado: float = 0.0005,
         min_samples: int = 100,
     ) -> dict[str, float]:
         """Compute bounded daily-percentile cutoffs from `reference_probs`."""

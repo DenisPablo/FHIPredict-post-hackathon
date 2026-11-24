@@ -111,7 +111,7 @@ FHIPredict-post-hackathon/
   - Returns GeoJSON `FeatureCollection` (up to `20,000` features) of neighbor propagation probabilities (`propagacion_pct`, `riesgo_base_pct`, `riesgo_fusionado_pct`, `categoria`, `confianza_pct`, `confianza_nivel`, `horizon_hours`).
   - `meta` includes `model_version`, `baseline_model_version`, `generated_at`, `horizon_hours`, `fecha_desde`, `fecha_hasta`, `active_source_cells`, `source_cutoff: { mode, Alto }`, `counts` (from static `SpreadPredictor.categorize`), and `returned`.
 - `GET /api/v1/monitor/metrics?limit=30` → `{ items: [...] }` (daily empirical metrics from `daily_eval_metrics`, newest first).
-- `GET /api/v1/monitor/comparison?target_date=YYYY-MM-DD&issued_date=...&min_frp_mw=10.0&min_alert_risk=Moderado` → GeoJSON `FeatureCollection` of `hit`, `miss`, and `false_alarm` cells (`404` when snapshot is missing).
+- `GET /api/v1/monitor/comparison?target_date=YYYY-MM-DD&issued_date=...&min_frp_mw=10.0&min_alert_risk=Alto` → GeoJSON `FeatureCollection` of `hit`, `miss`, and `false_alarm` cells (`404` when snapshot is missing).
 - `GET /api/v1/monitor/status` → `{ running, last_run_at, last_result, last_error }`.
 - `POST /api/v1/monitor/run?date=...&day_range=1..10&min_frp_mw=10.0` → `202 Accepted` triggering background VIIRS ingestion + evaluation (`FIRMS_MAP_KEY` required, else `400`; note NASA FIRMS Area API accepts `day_range` `1..5`).
 

@@ -4,9 +4,19 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import date
+from datetime import datetime, timedelta, timezone
 import httpx
 import numpy as np
+
+ARGENTINA_TZ = timezone(timedelta(hours=-3))
+
+
+def argentina_today_iso(now: datetime | None = None) -> str:
+    """Return the current calendar date (`YYYY-MM-DD`) in Argentina (`UTC-3`)."""
+    ref = now if now is not None else datetime.now(ARGENTINA_TZ)
+    if ref.tzinfo is None:
+        ref = ref.replace(tzinfo=timezone.utc)
+    return ref.astimezone(ARGENTINA_TZ).date().isoformat()
 
 
 @dataclass
@@ -26,6 +36,10 @@ class WeatherGridForecast:
     vpd_approx: np.ndarray  # (G, D)
     wind_direction_10m_dominant: np.ndarray | None = None  # (G, D) degrees [0, 360)
     wind_gusts_10m_max: np.ndarray | None = None  # (G, D) km/h
+    et0_approx: np.ndarray | None = None  # (G, D) mm/day
+    balance_hidrico_15d: np.ndarray | None = None  # (G, D) mm
+    balance_hidrico_30d: np.ndarray | None = None  # (G, D) mm
+    vpd_mean_7d: np.ndarray | None = None  # (G, D) kPa
 
 
 def _rolling_sum(arr: np.ndarray, window: int) -> np.ndarray:
@@ -34,6 +48,12 @@ def _rolling_sum(arr: np.ndarray, window: int) -> np.ndarray:
     out = cs.copy()
     out[:, window:] = cs[:, window:] - cs[:, :-window]
     return out
+
+
+def _rolling_mean(arr: np.ndarray, window: int) -> np.ndarray:
+    """Trailing rolling mean along axis=1 (including current index)."""
+    counts = np.minimum(np.arange(1, arr.shape[1] + 1, dtype=np.float32), float(window))
+    return (_rolling_sum(arr, window) / counts[None, :]).astype(np.float32)
 
 
 def _dry_streak(precip: np.ndarray) -> np.ndarray:
@@ -82,10 +102,22 @@ def build_weather_features(
     r15 = _rolling_sum(precip, 15)
     r30 = _rolling_sum(precip, 30)
     streak = _dry_streak(precip)
-    vpd = (0.6108 * np.exp((17.27 * tmax) / (tmax + 237.3)) * (1.0 - rh / 100.0)).astype(np.float32)
+    es_kpa = (0.6108 * np.exp((17.27 * tmax) / (tmax + 237.3))).astype(np.float32)
+    vpd = (es_kpa * (1.0 - rh / 100.0)).astype(np.float32)
+    delta = (4098.0 * es_kpa / ((tmax + 237.3) ** 2)).astype(np.float32)
+    u2 = (wind * (1000.0 / 3600.0) * 0.748).astype(np.float32)
+    rn = (0.408 * 0.70 * rad).astype(np.float32)
+    et0 = np.maximum(
+        0.0,
+        (delta * rn + 0.067 * (900.0 / (tmax + 273.0)) * u2 * vpd)
+        / (delta + 0.067 * (1.0 + 0.34 * u2)),
+    ).astype(np.float32)
+    bal15 = _rolling_sum(precip - et0, 15)
+    bal30 = _rolling_sum(precip - et0, 30)
+    vpd7 = _rolling_mean(vpd, 7)
 
-    # Identify forecast start index (first date >= today, fallback to last `forecast_days`)
-    today_iso = date.today().isoformat()
+    # Identify forecast start index (first date >= today in ART, fallback to last `forecast_days`)
+    today_iso = argentina_today_iso()
     start_idx = next((i for i, d in enumerate(times) if d >= today_iso), max(0, len(times) - forecast_days))
     end_idx = min(len(times), start_idx + forecast_days)
 
@@ -103,6 +135,10 @@ def build_weather_features(
         vpd_approx=vpd[:, start_idx:end_idx],
         wind_direction_10m_dominant=wdir_clean[:, start_idx:end_idx],
         wind_gusts_10m_max=wgust_clean[:, start_idx:end_idx],
+        et0_approx=et0[:, start_idx:end_idx],
+        balance_hidrico_15d=bal15[:, start_idx:end_idx],
+        balance_hidrico_30d=bal30[:, start_idx:end_idx],
+        vpd_mean_7d=vpd7[:, start_idx:end_idx],
     )
 
 

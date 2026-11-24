@@ -15,18 +15,18 @@ Primary implementation files:
 ## Requirements
 
 ### Requirement FRF-1: Model Bundle & Baseline Loading
-`ForecastService` SHALL load `fire_risk_bundle.joblib` (`lgbm-risk-24h-v2`, 20 features, `logit_offset=-4.8283137373023015`, static validation cutoffs `Extremo=0.05785066`, `Alto=0.01292018`, `Moderado=0.00354965`) and `cell_baseline.parquet` (`64,653` 5×5 km cells ordered by `cell_id`, mapped to `971` unique rounded `(lat_clima, lon_clima)` grid coordinates).
+`ForecastService` SHALL load `fire_risk_bundle.joblib` (`lgbm-risk-24h-v3`, 26 features including `et0_approx`, `balance_hidrico_15d/30d`, `vpd_mean_7d`, and `focos_ultimos_1d/2d`, `logit_offset=-4.8283137373023015`, static validation cutoffs `Extremo=0.05709182`, `Alto=0.01318587`, `Moderado=0.00364646`) and `cell_baseline.parquet` (`64,653` 5×5 km cells ordered by `cell_id`, mapped to `971` unique rounded `(lat_clima, lon_clima)` grid coordinates).
 
 #### Scenario: Health check reports loaded baseline and model metadata
 - **GIVEN** the FastAPI application has completed lifespan startup with valid model files
 - **WHEN** a client sends `GET /api/v1/health`
-- **THEN** the server MUST return HTTP `200` with `status="ok"`, `model_version="lgbm-risk-24h-v2"`, `cells_total=64653`, `grid_points=971`, and boolean `forecast_cached`.
+- **THEN** the server MUST return HTTP `200` with `status="ok"`, `model_version="lgbm-risk-24h-v3"`, `cells_total=64653`, `grid_points=971`, and boolean `forecast_cached`.
 
 ---
 
 ### Requirement FRF-2: Open-Meteo Ingestion & Rolling Weather Features
 `fetch_openmeteo_grid` MUST request 7 daily variables (`temperature_2m_max`, `relative_humidity_2m_mean`, `wind_speed_10m_max`, `wind_direction_10m_dominant`, `wind_gusts_10m_max`, `precipitation_sum`, `shortwave_radiation_sum`) for `past_days=30` and `forecast_days=15` (`timezone=America/Argentina/Buenos_Aires`) in bounded batches (`chunk_size=100`, `max_concurrency=1` by default) with exponential retry/backoff on HTTP `429`/`5xx` and timeouts.
-`build_weather_features` SHALL replace upstream nulls with safe local defaults, compute `lluvia_acum_7d`, `lluvia_acum_15d`, `lluvia_acum_30d`, `dias_consecutivos_sin_lluvia` (`precip < 1.0 mm`), and Tetens `vpd_approx`, and slice `D` forecast days starting at the first date `>= today` (or trailing `forecast_days`).
+`build_weather_features` SHALL replace upstream nulls with safe local defaults, compute `lluvia_acum_7d`, `lluvia_acum_15d`, `lluvia_acum_30d`, `dias_consecutivos_sin_lluvia` (`precip < 1.0 mm`), Tetens `vpd_approx`, FAO-56 `et0_approx`, `balance_hidrico_15d/30d`, and `vpd_mean_7d`, and slice `D` forecast days starting at the first date `>= today` in Argentina (`UTC-3`) (or trailing `forecast_days`).
 
 #### Scenario: Rolling weather features produce valid 15-day forecast arrays
 - **GIVEN** 30 past days and 15 forecast days of raw weather arrays for 2 grid points
@@ -63,7 +63,7 @@ For `mode="day"`, `query_geojson` SHALL slice `cached.probs[:, idx]` (`0 <= idx 
 For `mode="window"`, `query_geojson` MUST take the peak daily probability `max(cached.probs[:, :span], axis=1)` (`span = clamp(days, 1, n_avail)`) as the comonotonic Fréchet bound preserving the 24h probability scale, and resolve cutoffs against `cached.probs[:, :span]`.
 `ForecastService._resolve_risk_cutoffs` MUST inspect `RISK_CUTOFF_MODE`:
 - When `"static"`, it SHALL return `predictor.risk_cutoffs`.
-- When `"daily_percentile"` (default), `FireRiskPredictor.compute_daily_percentile_cutoffs` MUST compute empirical quantiles at `1 - RISK_TOP_FRAC_MODERADO` (`0.01`, top `1%`), `1 - RISK_TOP_FRAC_ALTO` (`0.003`, top `0.3%`), and `1 - RISK_TOP_FRAC_EXTREMO` (`0.0005`, top `0.05%`), clamp each below by selective `RISK_FLOOR_*` bounds (`0.002`, `0.005`, `0.015` — calibrated on Nov 20–23 `DonWeb1` empirical data to cut quiet-day false alarms by ~83% while preserving active-day capture), cap each above by the static validation cutoffs, enforce `Extremo >= Alto >= Moderado`, and fall back to static validation cutoffs when finite values `< 100`, `vmax - vmin <= 1e-12`, or `q_mod <= vmin + 1e-12`.
+- When `"daily_percentile"` (default), `FireRiskPredictor.compute_daily_percentile_cutoffs` MUST compute empirical quantiles at `1 - RISK_TOP_FRAC_MODERADO` (`0.025`, top `2.5%` preventive watch), `1 - RISK_TOP_FRAC_ALTO` (`0.004`, top `0.4%` actionable alert), and `1 - RISK_TOP_FRAC_EXTREMO` (`0.0005`, top `0.05%` actionable alert), clamp each below by `RISK_FLOOR_*` bounds (`0.0005`, `0.005`, `0.015` — two-tier operational split calibrated on 7-day `DonWeb1` empirical data: `16/66` actionable `Alto+` hits at `157` FA/day plus `+19` watch hits in `Moderado`), cap each above by the static validation cutoffs, enforce `Extremo >= Alto >= Moderado`, and fall back to static validation cutoffs when finite values `< 100`, `vmax - vmin <= 1e-12`, or `q_mod <= vmin + 1e-12`.
 
 #### Scenario: Multi-day window preserves 24h probability scale
 - **GIVEN** all `64,653` cells have a constant daily probability `0.0045` (`Moderado` in static mode, below `Alto` `0.01292`) across 15 days
@@ -73,9 +73,9 @@ For `mode="window"`, `query_geojson` MUST take the peak daily probability `max(c
 #### Scenario: Daily percentile mode adapts, caps outbreaks, clamps rainy days, and guards degenerate inputs
 - **GIVEN** `RISK_CUTOFF_MODE="daily_percentile"`
 - **WHEN** daily probabilities sit below static cutoffs with non-degenerate spread
-- **THEN** `Extremo` / `Alto` / `Moderado` cutoffs MUST drop below static cutoffs to target ~`0.05%`, `0.3%`, and `1%` of cells (clamped at or above `0.015`, `0.005`, `0.002`)
+- **THEN** `Extremo` / `Alto` / `Moderado` cutoffs MUST drop below static cutoffs to target ~`0.05%`, `0.4%`, and `2.5%` of cells (clamped at or above `0.015`, `0.005`, `0.0005`)
 - **AND** on severe outbreaks exceeding static cutoffs, cutoffs MUST cap at static bundle values
-- **AND** on near-zero rainy or quiet low-risk days (`<= 0.0018`), cutoffs MUST clamp at safety floors (`0.015`, `0.005`, `0.002`) yielding zero alerts
+- **AND** on near-zero rainy or quiet low-risk days (`<= 0.0004`), cutoffs MUST clamp at safety floors (`0.008`, `0.002`, `0.0005`) yielding zero alerts
 - **AND** on constant, `< 100` sample, or tied (`q_mod <= vmin`) distributions, cutoffs MUST fall back to static bundle values.
 
 ---

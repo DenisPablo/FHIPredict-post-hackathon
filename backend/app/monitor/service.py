@@ -206,7 +206,7 @@ class MonitorService:
         target_date: str,
         issued_date: str | None = None,
         min_frp_mw: float = 10.0,
-        min_alert_risk: str = "Moderado",
+        min_alert_risk: str = "Alto",
     ) -> dict[str, Any]:
         """Run and persist empirical evaluation for one `(target_date, issued_date)` pair."""
         return evaluate_snapshot_vs_viirs(
@@ -228,6 +228,8 @@ class MonitorService:
         y_true: np.ndarray,
         n_pos: int,
         profile: dict[str, float],
+        *,
+        alert_min_risk: str = "Moderado",
     ) -> dict[str, Any]:
         cutoffs = compute_daily_percentile_cutoffs(
             probs_24h,
@@ -239,23 +241,29 @@ class MonitorService:
             floor_alto=profile["floor_alto"],
             floor_moderado=profile["floor_moderado"],
         )
-        alerts_mask = probs_24h >= cutoffs["Moderado"]
+        alerts_mask = probs_24h >= cutoffs[alert_min_risk]
+        watch_mask = (probs_24h >= cutoffs["Moderado"]) & (~alerts_mask)
         alerts_count = int(np.sum(alerts_mask))
         hits_count = int(np.sum(alerts_mask & (y_true == 1)))
         misses_count = int(np.sum((~alerts_mask) & (y_true == 1)))
         false_alarms_count = int(np.sum(alerts_mask & (y_true == 0)))
+        watch_cells_count = int(np.sum(watch_mask))
+        watch_hits_count = int(np.sum(watch_mask & (y_true == 1)))
         return {
+            "alert_min_risk": alert_min_risk,
             "alerts_count": alerts_count,
             "hits_count": hits_count,
             "misses_count": misses_count,
             "false_alarms_count": false_alarms_count,
+            "watch_cells_count": watch_cells_count,
+            "watch_hits_count": watch_hits_count,
             "capture_rate": (hits_count / n_pos) if n_pos > 0 else None,
             "precision": (hits_count / alerts_count) if alerts_count > 0 else None,
             "cutoffs": {k: round(float(v), 6) for k, v in cutoffs.items()},
         }
 
     def compare_threshold_profiles(self, limit: int = 14) -> dict[str, Any]:
-        """Compare previous (`0.1/1/5%`) vs. current selective (`2B`) thresholds across stored days."""
+        """Compare previous (`Moderado+` 0.1/1/5%) vs. current two-tier (`Alto+` 0.05/0.4% + `Moderado` 2.5% watch) thresholds."""
         records = self.eval_store.list_metrics(limit=limit)
         current_profile: dict[str, float] = {
             "top_frac_extremo": self.settings.risk_top_frac_extremo,
@@ -267,7 +275,7 @@ class MonitorService:
         }
 
         items: list[dict[str, Any]] = []
-        tot_pos = prev_hits = curr_hits = prev_fa = curr_fa = 0
+        tot_pos = prev_hits = curr_hits = prev_fa = curr_fa = curr_watch_hits = 0
 
         for rec in records:
             target_date = str(rec["target_date"])
@@ -284,14 +292,27 @@ class MonitorService:
                 min_frp_mw=float(rec["min_frp_mw"]),
             )
             n_pos = int(np.sum(y_true))
-            prev_stats = self._eval_threshold_profile(snap["prob_24h"], y_true, n_pos, PREVIOUS_THRESHOLD_PROFILE)
-            curr_stats = self._eval_threshold_profile(snap["prob_24h"], y_true, n_pos, current_profile)
+            prev_stats = self._eval_threshold_profile(
+                snap["prob_24h"],
+                y_true,
+                n_pos,
+                PREVIOUS_THRESHOLD_PROFILE,
+                alert_min_risk="Moderado",
+            )
+            curr_stats = self._eval_threshold_profile(
+                snap["prob_24h"],
+                y_true,
+                n_pos,
+                current_profile,
+                alert_min_risk="Alto",
+            )
 
             tot_pos += n_pos
             prev_hits += prev_stats["hits_count"]
             curr_hits += curr_stats["hits_count"]
             prev_fa += prev_stats["false_alarms_count"]
             curr_fa += curr_stats["false_alarms_count"]
+            curr_watch_hits += curr_stats["watch_hits_count"]
 
             items.append(
                 {
@@ -306,14 +327,24 @@ class MonitorService:
         fa_reduction_pct = round((1.0 - (curr_fa / prev_fa)) * 100.0, 1) if prev_fa > 0 else None
         return {
             "profiles": {
-                "previous": {"label": "previous_0.1_1_5pct", **PREVIOUS_THRESHOLD_PROFILE},
-                "current": {"label": "current_2B_selective", **current_profile},
+                "previous": {
+                    "label": "previous_0.1_1_5pct",
+                    "alert_min_risk": "Moderado",
+                    **PREVIOUS_THRESHOLD_PROFILE,
+                },
+                "current": {
+                    "label": "current_2tier_alto_alert",
+                    "alert_min_risk": "Alto",
+                    **current_profile,
+                },
             },
             "summary": {
                 "days_compared": len(items),
                 "total_positives": tot_pos,
                 "previous_total_hits": prev_hits,
                 "current_total_hits": curr_hits,
+                "current_total_watch_hits": curr_watch_hits,
+                "current_total_combined_hits": curr_hits + curr_watch_hits,
                 "previous_total_false_alarms": prev_fa,
                 "current_total_false_alarms": curr_fa,
                 "false_alarm_reduction_pct": fa_reduction_pct,
@@ -327,7 +358,7 @@ class MonitorService:
         target_date: str,
         issued_date: str | None = None,
         min_frp_mw: float = 10.0,
-        min_alert_risk: str = "Moderado",
+        min_alert_risk: str = "Alto",
     ) -> dict[str, Any]:
         """Return GeoJSON Point FeatureCollection of `hit`, `miss`, and `false_alarm` cells."""
         iss = issued_date or target_date

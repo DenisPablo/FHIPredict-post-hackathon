@@ -93,7 +93,8 @@ def test_evaluate_snapshot_vs_viirs_end_to_end_and_persists(tmp_path: Path):
     assert result["n_positives"] == 1
     assert result["hits_count"] == 1
     assert result["misses_count"] == 0
-    assert result["false_alarms_count"] == 2
+    # Default min_alert_risk="Alto": cell 30 (Moderado) is preventive watch, not a false alarm.
+    assert result["false_alarms_count"] == 1
 
     history = eval_store.list_metrics(limit=10)
     assert len(history) == 1

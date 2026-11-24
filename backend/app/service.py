@@ -14,7 +14,7 @@ import numpy as np
 from .config import Settings
 from .monitor.firms import ViirsStore
 from .monitor.snapshots import SnapshotStore
-from .openmeteo import WeatherGridForecast, fetch_openmeteo_grid
+from .openmeteo import WeatherGridForecast, argentina_today_iso, fetch_openmeteo_grid
 from .predictor import FireRiskPredictor
 from .spread import (
     NeighborGraph,
@@ -312,17 +312,25 @@ class ForecastService:
         return cutoffs, "daily_percentile"
 
     def _maybe_save_snapshot_24h(self, cached: CachedForecast) -> bool:
-        """Persist today's 24h prediction snapshot without disrupting forecast serving."""
+        """Persist today's 24h prediction snapshot aligned to Argentina (`UTC-3`) calendar date."""
         if self._snapshot_store is None or len(cached.dates) == 0:
             return False
         try:
-            issued_date = cached.generated_at[:10]
-            probs_24h = cached.probs[:, 0]
+            gen_dt: datetime | None = None
+            try:
+                gen_dt = datetime.fromisoformat(cached.generated_at)
+            except ValueError:
+                gen_dt = None
+            today_ar = argentina_today_iso(gen_dt)
+            day_idx = cached.dates.index(today_ar) if today_ar in cached.dates else 0
+            target_date = cached.dates[day_idx]
+            issued_date = target_date
+            probs_24h = cached.probs[:, day_idx]
             cutoffs, _ = self._resolve_risk_cutoffs(probs_24h)
             categories = self.predictor.categorize(probs_24h, cutoffs=cutoffs)
             return self._snapshot_store.save_snapshot_24h(
                 issued_date=issued_date,
-                target_date=cached.dates[0],
+                target_date=target_date,
                 generated_at=cached.generated_at,
                 model_version=self.predictor.model_version,
                 cell_ids=self.baseline.cell_id,
@@ -446,28 +454,36 @@ class ForecastService:
             assert base_mem is not None
             mem_d = self._decay_fire_memory_for_horizon(base_mem, d_idx)
 
-            X = np.column_stack([
-                b.lat_centro,
-                b.lon_centro,
-                np.full(n_cells, mes_val, dtype=np.float32),
-                np.full(n_cells, doy_val, dtype=np.float32),
-                mem_d.focos_7d,
-                mem_d.focos_30d,
-                mem_d.frp_7d,
-                b.clim_months[:, dt.month - 1],
-                mem_d.anios_desde_ultimo_fuego,
-                b.elevacion_m,
-                weather.temperature_2m_max[g_idx, d_idx],
-                weather.relative_humidity_2m[g_idx, d_idx],
-                weather.wind_speed_10m_max[g_idx, d_idx],
-                weather.precipitation_sum[g_idx, d_idx],
-                weather.shortwave_radiation_sum[g_idx, d_idx],
-                weather.lluvia_acum_7d[g_idx, d_idx],
-                weather.lluvia_acum_15d[g_idx, d_idx],
-                weather.lluvia_acum_30d[g_idx, d_idx],
-                weather.dias_consecutivos_sin_lluvia[g_idx, d_idx],
-                weather.vpd_approx[g_idx, d_idx],
-            ])
+            zeros_c = np.zeros(n_cells, dtype=np.float32)
+            feature_map = {
+                "lat_centro": b.lat_centro,
+                "lon_centro": b.lon_centro,
+                "mes": np.full(n_cells, mes_val, dtype=np.float32),
+                "dia_anio": np.full(n_cells, doy_val, dtype=np.float32),
+                "focos_ultimos_1d": mem_d.focos_1d,
+                "focos_ultimos_2d": mem_d.focos_2d,
+                "focos_ultimos_7d": mem_d.focos_7d,
+                "focos_ultimos_30d": mem_d.focos_30d,
+                "frp_ultimos_7d": mem_d.frp_7d,
+                "mediana_historica_mes": b.clim_months[:, dt.month - 1],
+                "anios_desde_ultimo_fuego": mem_d.anios_desde_ultimo_fuego,
+                "elevacion_m": b.elevacion_m,
+                "temperature_2m_max": weather.temperature_2m_max[g_idx, d_idx],
+                "relative_humidity_2m": weather.relative_humidity_2m[g_idx, d_idx],
+                "wind_speed_10m_max": weather.wind_speed_10m_max[g_idx, d_idx],
+                "precipitation_sum": weather.precipitation_sum[g_idx, d_idx],
+                "shortwave_radiation_sum": weather.shortwave_radiation_sum[g_idx, d_idx],
+                "lluvia_acum_7d": weather.lluvia_acum_7d[g_idx, d_idx],
+                "lluvia_acum_15d": weather.lluvia_acum_15d[g_idx, d_idx],
+                "lluvia_acum_30d": weather.lluvia_acum_30d[g_idx, d_idx],
+                "dias_consecutivos_sin_lluvia": weather.dias_consecutivos_sin_lluvia[g_idx, d_idx],
+                "vpd_approx": weather.vpd_approx[g_idx, d_idx],
+                "et0_approx": weather.et0_approx[g_idx, d_idx] if weather.et0_approx is not None else zeros_c,
+                "balance_hidrico_15d": weather.balance_hidrico_15d[g_idx, d_idx] if weather.balance_hidrico_15d is not None else zeros_c,
+                "balance_hidrico_30d": weather.balance_hidrico_30d[g_idx, d_idx] if weather.balance_hidrico_30d is not None else zeros_c,
+                "vpd_mean_7d": weather.vpd_mean_7d[g_idx, d_idx] if weather.vpd_mean_7d is not None else weather.vpd_approx[g_idx, d_idx],
+            }
+            X = np.column_stack([feature_map[col] for col in self.predictor.feature_columns])
             day_probs, day_stab = self.predictor.predict_with_stability(X)
             probs[:, d_idx] = day_probs
             stability[:, d_idx] = day_stab.astype(np.float16)

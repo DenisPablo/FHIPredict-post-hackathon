@@ -30,6 +30,8 @@ describe('RiskLegend', () => {
     expect(screen.getByText('0.50 – 1.50%')).toBeTruthy();
     expect(screen.getByText('0.20 – 0.50%')).toBeTruthy();
     expect(screen.getByText('< 0.20%')).toBeTruthy();
-    expect(screen.getByText('Umbral por percentil diario (top 1% / 0.3% / 0.05%)')).toBeTruthy();
+    expect(
+      screen.getByText('Umbral diario: Alerta Alto+ (top 0.4% / 0.05%) · Vigilancia Moderado (top 2.5%)'),
+    ).toBeTruthy();
   });
 });

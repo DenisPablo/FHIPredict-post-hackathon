@@ -188,6 +188,9 @@ def test_monitor_threshold_comparison_endpoint(tmp_path: Path, monkeypatch):
         assert len(body["items"]) == 1
         item = body["items"][0]
         assert item["previous"]["false_alarms_count"] > item["current"]["false_alarms_count"]
+        assert item["current"]["alert_min_risk"] == "Alto"
         assert item["current"]["hits_count"] == 1
+        assert "watch_cells_count" in item["current"]
+        assert "watch_hits_count" in item["current"]
         assert body["summary"]["false_alarm_reduction_pct"] > 0
 

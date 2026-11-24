@@ -31,14 +31,16 @@ const SAMPLE_ITEM: MonitorMetricItem = {
 
 const SAMPLE_COMPARISON: ThresholdComparisonResponse = {
   profiles: {
-    previous: { label: 'previous_0.1_1_5pct' },
-    current: { label: 'current_2B_selective' },
+    previous: { label: 'previous_0.1_1_5pct', alert_min_risk: 'Moderado' },
+    current: { label: 'current_2tier_alto_alert', alert_min_risk: 'Alto' },
   },
   summary: {
     days_compared: 1,
     total_positives: 12,
     previous_total_hits: 8,
     current_total_hits: 6,
+    current_total_watch_hits: 2,
+    current_total_combined_hits: 8,
     previous_total_false_alarms: 3200,
     current_total_false_alarms: 544,
     false_alarm_reduction_pct: 83.0,
@@ -49,22 +51,28 @@ const SAMPLE_COMPARISON: ThresholdComparisonResponse = {
       issued_date: '2026-11-18',
       n_positives: 12,
       previous: {
+        alert_min_risk: 'Moderado',
         alerts_count: 3208,
         hits_count: 8,
         misses_count: 4,
         false_alarms_count: 3200,
+        watch_cells_count: 0,
+        watch_hits_count: 0,
         capture_rate: 8 / 12,
         precision: 8 / 3208,
         cutoffs: { Extremo: 0.01, Alto: 0.003, Moderado: 0.001 },
       },
       current: {
+        alert_min_risk: 'Alto',
         alerts_count: 550,
         hits_count: 6,
         misses_count: 6,
         false_alarms_count: 544,
+        watch_cells_count: 1400,
+        watch_hits_count: 2,
         capture_rate: 0.5,
         precision: 6 / 550,
-        cutoffs: { Extremo: 0.015, Alto: 0.005, Moderado: 0.002 },
+        cutoffs: { Extremo: 0.015, Alto: 0.005, Moderado: 0.0005 },
       },
     },
   ],
@@ -119,13 +127,25 @@ describe('MonitorDashboard', () => {
     const csvButton = screen.getByRole('button', { name: /Descargar CSV/i });
     expect(csvButton).toBeEnabled();
 
-    expect(screen.getByText(/Comparación de umbrales: Anterior vs\. Actual \(2B\)/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Comparación de umbrales: Anterior vs\. Actual \(Alerta Alto\+\)/i),
+    ).toBeInTheDocument();
     expect(screen.getByText(/-83\.0% falsas alarmas/i)).toBeInTheDocument();
+    expect(screen.getByText(/Vigilancia Moderado: \+2 focos \(total 8\/12\)/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Gráfico comparativo de umbrales/i)).toBeInTheDocument();
     expect(screen.getByText('3200')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^Aciertos$/i }));
     expect(screen.queryByText('3200')).not.toBeInTheDocument();
-    expect(screen.getByText('6')).toBeInTheDocument();
+    expect(screen.getAllByText('6').length).toBeGreaterThanOrEqual(1);
+
+    expect(
+      screen.getByText(/Serie temporal: VIIRS real vs\. Modelo previo y Actual \(Alerta Alto\+\)/i),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/Gráfico lineal comparativo/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Alertas vs\. VIIRS \(log\)/i }));
+    expect(screen.getByText(/Escala logarítmica/i)).toBeInTheDocument();
+    expect(screen.getByText('3208')).toBeInTheDocument();
+    expect(screen.getByText('550')).toBeInTheDocument();
 
     fetchSpy.mockRestore();
   });

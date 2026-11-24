@@ -15,7 +15,7 @@ Primary implementation files:
 ## Requirements
 
 ### Requirement MON-1: Idempotent Daily 24h Snapshot Persistence
-When `ENABLE_MONITOR_SNAPSHOTS=true`, `ForecastService._maybe_save_snapshot_24h` SHALL persist day-0 probabilities (`cached.probs[:, 0]`) and risk categories computed via `_resolve_risk_cutoffs(probs_24h)` into `SnapshotStore` (`forecast_snapshots_24h` table in `MONITOR_DIR/monitor.duckdb`).
+When `ENABLE_MONITOR_SNAPSHOTS=true`, `ForecastService._maybe_save_snapshot_24h` SHALL resolve the Argentina (`UTC-3`) calendar date from `generated_at` (`argentina_today_iso`), select the matching forecast day index (`target_date = issued_date = today_ar` when present, fallback `0`), and persist those probabilities and risk categories computed via `_resolve_risk_cutoffs(probs_24h)` into `SnapshotStore` (`forecast_snapshots_24h` table in `MONITOR_DIR/monitor.duckdb`).
 `SnapshotStore.save_snapshot_24h` MUST reject empty or mismatched-length arrays with `ValueError`, MUST be idempotent per `(issued_date, cell_id)` (returning `False` without overwriting when `issued_date` already exists and `overwrite=False`), and SHALL use DuckDB settings `memory_limit=MONITOR_DUCKDB_MEMORY_LIMIT` (`"256MB"` default) and `threads=1`.
 
 #### Scenario: Snapshot persistence matches forecast cutoffs and ignores duplicate writes
@@ -45,7 +45,7 @@ For each ingested `acq_date` that already has a stored 24h snapshot, `ingest_and
 ### Requirement MON-3: Pure-NumPy Empirical Evaluation & Outcome Classification
 `build_ground_truth_vector` MUST align sparse VIIRS rows onto snapshot `cell_id` order and mark a cell positive (`1`) iff `detections_count >= 1` AND `frp_sum >= min_frp_mw` (`10.0` MW default).
 `compute_binary_metrics` MUST calculate pure-NumPy `observed_rate`, `mean_predicted_prob`, `calibration_ratio` (`None` when `observed_rate == 0.0`), `brier_score`, `roc_auc` (`None` when `n_pos == 0` or `n_neg == 0`), `pr_auc` (`None` when `n_pos == 0`), and per-category (`Extremo`, `Alto`, `Moderado`, `Bajo`) `cells_count`, `positives_count`, `precision`, `recall`, and `lift`.
-`classify_cell_outcomes` SHALL label cells with `risk >= min_alert_risk` and `y_true == 1` as `"hit"`, `risk >= min_alert_risk` and `y_true == 0` as `"false_alarm"`, `risk < min_alert_risk` and `y_true == 1` as `"miss"`, and MUST omit true negatives.
+`classify_cell_outcomes` SHALL label cells with `risk >= min_alert_risk` (default `"Alto"`; `Moderado` acts as a non-alarm preventive watch layer) and `y_true == 1` as `"hit"`, `risk >= min_alert_risk` and `y_true == 0` as `"false_alarm"`, `risk < min_alert_risk` and `y_true == 1` as `"miss"`, and MUST omit true negatives.
 `EvaluationStore` MUST persist records in `daily_eval_metrics` keyed by `(target_date, issued_date, min_frp_mw)`.
 
 #### Scenario: Zero positive detections avoid division by zero
